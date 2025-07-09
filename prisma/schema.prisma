@@ -70,6 +70,7 @@ model Session {
   user_agent        String?  @db.Text
   ip_address        String?  @db.VarChar(45)
   expires_at        DateTime
+  deleted_at        DateTime?  // 软删除时间戳
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
   
@@ -81,6 +82,7 @@ model Session {
   @@index([token_hash])               // 令牌验证查询
   @@index([expires_at])               // 过期会话清理
   @@index([created_at])               // 会话创建时间查询
+  @@index([deleted_at])               // 软删除查询
   
   @@map("sessions")
 }
