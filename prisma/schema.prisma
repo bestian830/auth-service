@@ -1,0 +1,118 @@
+// Prisma Schema for Beauty Business Authentication Service
+// 美业认证服务数据库设计
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 租户表 - 美业店铺
+model Tenant {
+  id                            String   @id @default(uuid()) @db.Uuid
+  email                         String   @unique @db.VarChar(255)
+  password_hash                 String   @db.VarChar(255)
+  store_name                    String   @db.VarChar(100)
+  subdomain                     String   @unique @db.VarChar(50)
+  
+  // 订阅状态管理
+  subscription_status           SubscriptionStatus @default(TRIAL)
+  subscription_plan            SubscriptionPlan   @default(BASIC)
+  subscription_starts_at       DateTime?
+  subscription_ends_at         DateTime?
+  trial_ends_at                DateTime?
+  
+  // 支付服务集成
+  payment_provider             PaymentProvider?                   // 支付服务商枚举
+  payment_customer_id          String?  @unique @db.VarChar(255)  // 支付商的客户ID
+  payment_subscription_id      String?  @unique @db.VarChar(255)  // 支付商的订阅ID
+  
+  // 店铺基本信息
+  phone                        String?  @db.VarChar(20)
+  address                      String?  @db.VarChar(500)
+  
+  // 系统字段
+  email_verified_at            DateTime?
+  password_reset_token         String?  @db.VarChar(255)
+  password_reset_expires_at    DateTime?
+  email_verification_token     String?  @db.VarChar(255)
+  
+  // 时间戳
+  created_at                   DateTime @default(now())
+  updated_at                   DateTime @updatedAt
+  
+  // 关联关系
+  sessions                     Session[]
+  
+  // 索引优化
+  @@index([email])                    // 登录查询
+  @@index([subdomain])                // 子域名路由
+  @@index([subscription_status])      // 订阅状态查询
+  @@index([payment_customer_id])      // 支付集成查询
+  @@index([payment_provider])         // 支付服务商查询
+  @@index([created_at])               // 时间排序查询
+  @@index([trial_ends_at])            // 试用期到期查询
+  @@index([subscription_ends_at])     // 订阅到期查询
+  
+  @@map("tenants")
+}
+
+// 会话表 - 登录会话管理
+model Session {
+  id                String   @id @default(uuid()) @db.Uuid
+  tenant_id         String   @db.Uuid
+  token_hash        String   @unique @db.VarChar(255)
+  refresh_token     String?  @unique @db.VarChar(255)
+  user_agent        String?  @db.Text
+  ip_address        String?  @db.VarChar(45)
+  expires_at        DateTime
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  
+  // 关联关系
+  tenant            Tenant   @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  
+  // 索引优化
+  @@index([tenant_id])                // 租户会话查询
+  @@index([token_hash])               // 令牌验证查询
+  @@index([expires_at])               // 过期会话清理
+  @@index([created_at])               // 会话创建时间查询
+  
+  @@map("sessions")
+}
+
+// 订阅状态枚举
+enum SubscriptionStatus {
+  TRIAL      // 试用期
+  ACTIVE     // 活跃订阅
+  EXPIRED    // 已过期
+  CANCELED   // 已取消
+  
+  @@map("subscription_status")
+}
+
+// 订阅计划枚举
+enum SubscriptionPlan {
+  BASIC      // 基础版
+  PRO        // 专业版
+  ENTERPRISE // 企业版
+  
+  @@map("subscription_plan")
+}
+
+// 支付服务商枚举
+enum PaymentProvider {
+  STRIPE     // Stripe
+  PAYPAL     // PayPal
+  SQUARE     // Square
+  WECHAT     // 微信支付
+  ALIPAY     // 支付宝
+  UNIONPAY   // 银联支付
+  
+  @@map("payment_provider")
+}
+
