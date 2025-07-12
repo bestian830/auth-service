@@ -23,11 +23,14 @@ export function validateEmail(email: string): SimpleValidationResult {
   if (error) {
     return {
       isValid: false,
-      error: 'Email format is incorrect or exceeds 100 characters'
+      errors: [{ 
+        field: 'email', 
+        message: 'Email format is incorrect or exceeds 100 characters'
+      }]
     };
   }
 
-  return { isValid: true };
+  return { isValid: true, errors: [] };
 }
 
 /**
