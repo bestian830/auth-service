@@ -13,6 +13,8 @@ import {
   DatabaseResult
 } from '../types';
 import { PaginationResult } from '../types/api';
+import { SubscriptionStatus, SubscriptionPlan, PaymentProvider } from '../../generated/prisma';
+import { logger } from '../utils/logger';
 
 /**
  * 租户数据访问对象
@@ -274,7 +276,7 @@ export class TenantModel {
   }
 
   /**
-   * 更新租户订阅状态
+   * 更新租户订阅信息
    * @param context 请求上下文
    * @param tenantId 租户ID
    * @param subscriptionData 订阅数据
@@ -284,12 +286,12 @@ export class TenantModel {
     context: AuthRequestContext,
     tenantId: string,
     subscriptionData: {
-      subscription_status?: 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'CANCELED';
-      subscription_plan?: 'BASIC' | 'PRO' | 'ENTERPRISE';
+      subscription_status?: SubscriptionStatus;
+      subscription_plan?: SubscriptionPlan;
       subscription_starts_at?: Date;
       subscription_ends_at?: Date;
       trial_ends_at?: Date;
-      payment_provider?: 'STRIPE' | 'PAYPAL' | 'SQUARE' | 'WECHAT' | 'ALIPAY' | 'UNIONPAY';
+      payment_provider?: PaymentProvider;
       payment_customer_id?: string;
       payment_subscription_id?: string;
     }
