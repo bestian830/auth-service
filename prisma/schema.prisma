@@ -118,3 +118,18 @@ enum PaymentProvider {
   @@map("payment_provider")
 }
 
+model TokenBlacklist {
+  id                String    @id @default(cuid())
+  jti               String    @unique  // JWT ID
+  tenant_id         String?   // 关联的租户ID（用于全局撤销）
+  expires_at        DateTime  // token原始过期时间
+  reason            String    @default("revoked") // 撤销原因
+  revoke_all_before DateTime? // 如果设置，表示撤销此时间前的所有token
+  created_at        DateTime  @default(now())
+  
+  @@index([jti])
+  @@index([tenant_id])
+  @@index([expires_at])
+  @@map("token_blacklist")
+}
+
