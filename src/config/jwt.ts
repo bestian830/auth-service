@@ -3,6 +3,11 @@ import { config } from './env';
 import { JWT_CONFIG } from '../constants/jwt';
 import { AuthJwtPayload, TokenGenerationParams } from '../types/jwt';
 import { TokenRefreshResult } from '../types/auth';
+import { 
+  addTokenToBlacklist, 
+  isTokenBlacklisted, 
+  isUserTokenRevoked 
+} from '../utils/token-blacklist';
 
 /**
  * 生成JWT Token
@@ -27,27 +32,27 @@ export const generateToken = (
     {
       algorithm: JWT_CONFIG.ALGORITHM,
       expiresIn,
-      jwtid: generateTokenId() // 保留jti用于后续黑名单服务
+      jwtid: generateTokenId() // 用于黑名单服务
     }
   );
 };
 
 /**
  * 验证JWT Token
- * TODO: 后续需要集成独立的黑名单服务进行token撤销验证
+ * ✅ 已集成黑名单服务进行token撤销验证
  */
 export const verifyToken = (
   token: string, 
   type: 'access' | 'refresh' = 'access'
 ): Promise<AuthJwtPayload> => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     const secret = type === 'access' ? config.jwt.secret : config.jwt.refreshSecret;
     
     jwt.verify(token, secret, {
       algorithms: [JWT_CONFIG.ALGORITHM],
       issuer: JWT_CONFIG.ISSUER,
       audience: JWT_CONFIG.AUDIENCE
-    }, (error, decoded) => {
+    }, async (error, decoded) => {
       if (error) {
         reject(error);
         return;
@@ -61,11 +66,17 @@ export const verifyToken = (
         return;
       }
       
-      // TODO: 后续需要调用黑名单服务检查token是否被撤销
-      // if (payload.jti && await blacklistService.isBlacklisted(payload.jti)) {
-      //   reject(new Error('Token has been revoked'));
-      //   return;
-      // }
+      // ✅ 检查token是否被单独撤销
+      if (payload.jti && await isTokenBlacklisted(payload.jti)) {
+        reject(new Error('Token has been revoked'));
+        return;
+      }
+      
+      // ✅ 检查用户是否全局撤销了所有token
+      if (payload.iat && await isUserTokenRevoked(payload.tenantId, new Date(payload.iat * 1000))) {
+        reject(new Error('Token has been revoked due to security reset'));
+        return;
+      }
       
       resolve(payload);
     });
@@ -109,7 +120,7 @@ export const generateTokenPair = (tenantData: TokenGenerationParams) => {
  */
 export const refreshAccessToken = async (refreshToken: string): Promise<TokenRefreshResult> => {
   try {
-    // 验证refresh token
+    // 验证refresh token (包含黑名单检查)
     const payload = await verifyToken(refreshToken, 'refresh');
     
     // 生成新的access token
@@ -144,19 +155,19 @@ export const refreshAccessToken = async (refreshToken: string): Promise<TokenRef
 };
 
 /**
- * 撤销Token（预留接口，后续集成黑名单服务）
- * TODO: 需要调用独立的黑名单服务
+ * 撤销Token
+ * ✅ 已集成黑名单服务
  */
-export const revokeToken = (token: string): void => {
+export const revokeToken = async (token: string, reason: string = 'revoked'): Promise<void> => {
   try {
     const decoded = jwt.decode(token) as AuthJwtPayload;
-    if (decoded?.jti) {
-      // TODO: 调用黑名单服务
-      // await blacklistService.addToBlacklist(decoded.jti, remainingTime);
-      console.log(`TODO: Token ${decoded.jti} should be added to blacklist service`);
+    if (decoded?.jti && decoded?.exp) {
+      const expiresAt = new Date(decoded.exp * 1000);
+      await addTokenToBlacklist(decoded.jti, expiresAt, reason);
     }
   } catch (error) {
     // 忽略解码错误，可能是无效token
+    throw new Error('Failed to revoke token');
   }
 };
 
@@ -233,14 +244,14 @@ export const verifyEmailVerificationToken = (token: string): Promise<{email: str
 
 /**
  * 完整的请求认证流程
- * TODO: 后续需要集成黑名单服务进行token撤销验证
+ * ✅ 已集成黑名单服务进行token撤销验证
  */
 export const authenticateRequest = async (authHeader?: string): Promise<AuthJwtPayload | null> => {
   // 1. 从请求头提取token
   const token = extractTokenFromHeader(authHeader);
   if (!token) return null;
   
-  // 2. 验证access token并获取租户信息
+  // 2. 验证access token并获取租户信息 (包含黑名单检查)
   try {
     return await verifyToken(token, 'access');
   } catch {

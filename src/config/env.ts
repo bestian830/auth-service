@@ -77,13 +77,25 @@ export const createConfig = (): AppConfig => {
     // 邮件配置 (用于邮箱验证、密码重置等)
     email: {
       smtp: {
-        host: process.env.SMTP_HOST || 'localhost',
+        host: process.env.SMTP_HOST || 'mail.tymoe.com', // 🔧 请联系IT部门确认SMTP服务器地址
         port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: process.env.SMTP_SECURE === 'true',
-        user: process.env.SMTP_USER || '',
-        password: process.env.SMTP_PASSWORD || ''
+        secure: process.env.SMTP_SECURE === 'false', // true for 465, false for 587
+        user: process.env.SMTP_USER || 'noreply@tymoe.com', // 🔧 请填写发送邮箱地址
+        password: process.env.SMTP_PASSWORD || 'your_email_password' // 🔧 请填写邮箱密码
       },
-      from: process.env.EMAIL_FROM || 'noreply@yourdomain.com'
+      from: {
+        name: process.env.EMAIL_FROM_NAME || 'Tymoe', // 🔧 公司名称
+        address: process.env.EMAIL_FROM_ADDRESS || 'noreply@tymoe.com' // 🔧 发送邮箱地址
+      },
+      // 邮件模板配置 - 用于生成邮件中的链接
+      templates: {
+        baseUrl: process.env.FRONTEND_URL || 'https://app.tymoe.com', // 🔧 前端应用域名
+        verificationPath: process.env.EMAIL_VERIFICATION_PATH || '/verify-email',
+        resetPasswordPath: process.env.EMAIL_RESET_PASSWORD_PATH || '/reset-password',
+        // 令牌过期时间
+        verificationTokenExpiry: process.env.EMAIL_VERIFICATION_TOKEN_EXPIRY || '24h', // 邮箱验证令牌24小时过期
+        resetTokenExpiry: process.env.EMAIL_RESET_TOKEN_EXPIRY || '1h' // 密码重置令牌1小时过期
+      }
     },
 
     // 密码配置
@@ -128,4 +140,4 @@ export const createConfig = (): AppConfig => {
 };
 
 // 导出配置实例
-export const config = createConfig(); 
+export const config = createConfig();

@@ -3,9 +3,11 @@ export * from './env';
 export * from './database';
 export * from './cors';
 export * from './jwt';
+export * from './email';
 
 // 重新导出常用配置
 export { config } from './env';
 export { corsConfig } from './cors';
 export { authenticateRequest } from './jwt';
-export { default as prisma } from './database'; 
+export { default as prisma } from './database';
+export { createEmailTransporter } from './email'; 
