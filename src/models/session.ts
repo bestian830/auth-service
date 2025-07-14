@@ -7,11 +7,11 @@ import prisma from '../config/database';
 import { 
   SessionEntity,
   SessionCreateData,
-  SessionFilter,
-  RequestContext,
-  PaginationResult,
+  SessionUpdateData,
+  AuthRequestContext,
   DatabaseResult
 } from '../types';
+import { PaginationResult } from '../types/api';
 
 /**
  * 会话数据访问对象
@@ -36,7 +36,7 @@ export class SessionModel {
    * @param sessionData 会话创建数据
    * @returns 创建的会话记录
    */
-  static async create(context: RequestContext, sessionData: SessionCreateData): Promise<SessionEntity> {
+  static async create(context: AuthRequestContext, sessionData: SessionCreateData): Promise<SessionEntity> {
     const session = await prisma.session.create({
       data: {
         tenant_id: sessionData.tenant_id,
@@ -57,7 +57,7 @@ export class SessionModel {
    * @param sessionId 会话ID
    * @returns 会话记录或null
    */
-  static async findById(context: RequestContext, sessionId: string): Promise<SessionEntity | null> {
+  static async findById(context: AuthRequestContext, sessionId: string): Promise<SessionEntity | null> {
     const session = await prisma.session.findFirst({
       where: { 
         id: sessionId,
@@ -74,7 +74,7 @@ export class SessionModel {
    * @param tokenHash 令牌哈希
    * @returns 会话记录或null
    */
-  static async findByTokenHash(context: RequestContext, tokenHash: string): Promise<SessionEntity | null> {
+  static async findByTokenHash(context: AuthRequestContext, tokenHash: string): Promise<SessionEntity | null> {
     const session = await prisma.session.findFirst({
       where: { 
         token_hash: tokenHash,
@@ -94,7 +94,7 @@ export class SessionModel {
    * @param refreshToken 刷新令牌
    * @returns 会话记录或null
    */
-  static async findByRefreshToken(context: RequestContext, refreshToken: string): Promise<SessionEntity | null> {
+  static async findByRefreshToken(context: AuthRequestContext, refreshToken: string): Promise<SessionEntity | null> {
     const session = await prisma.session.findFirst({
       where: { 
         refresh_token: refreshToken,
@@ -116,7 +116,7 @@ export class SessionModel {
    * @returns 会话列表
    */
   static async findByTenantId(
-    context: RequestContext, 
+    context: AuthRequestContext, 
     tenantId: string, 
     includeDeleted: boolean = false
   ): Promise<SessionEntity[]> {
@@ -140,10 +140,10 @@ export class SessionModel {
    * @returns 分页会话结果
    */
   static async findWithPagination(
-    context: RequestContext,
+    context: AuthRequestContext,
     page: number = 1,
     limit: number = 20,
-    filters: Partial<SessionFilter> = {}
+    filters: Partial<any> = {} // Assuming SessionFilter is no longer needed or replaced
   ): Promise<PaginationResult<SessionEntity>> {
     const skip = (page - 1) * limit;
 
@@ -231,7 +231,7 @@ export class SessionModel {
    * @param tenantId 租户ID（可选）
    * @returns 活跃会话列表
    */
-  static async findActiveSessions(context: RequestContext, tenantId?: string): Promise<SessionEntity[]> {
+  static async findActiveSessions(context: AuthRequestContext, tenantId?: string): Promise<SessionEntity[]> {
     const whereConditions: any = {
       deleted_at: null,
       expires_at: {
@@ -257,7 +257,7 @@ export class SessionModel {
    * @param tenantId 租户ID（可选）
    * @returns 过期会话列表
    */
-  static async findExpiredSessions(context: RequestContext, tenantId?: string): Promise<SessionEntity[]> {
+  static async findExpiredSessions(context: AuthRequestContext, tenantId?: string): Promise<SessionEntity[]> {
     const whereConditions: any = {
       deleted_at: null,
       expires_at: {
@@ -285,15 +285,9 @@ export class SessionModel {
    * @returns 更新后的会话记录或null
    */
   static async updateById(
-    context: RequestContext,
+    context: AuthRequestContext,
     sessionId: string,
-    updateData: {
-      token_hash?: string;
-      refresh_token?: string;
-      user_agent?: string;
-      ip_address?: string;
-      expires_at?: Date;
-    }
+    updateData: SessionUpdateData
   ): Promise<SessionEntity | null> {
     const result = await prisma.session.updateMany({
       where: {
@@ -323,7 +317,7 @@ export class SessionModel {
    * @returns 更新后的会话记录或null
    */
   static async refreshExpiration(
-    context: RequestContext,
+    context: AuthRequestContext,
     sessionId: string,
     newExpiresAt: Date
   ): Promise<SessionEntity | null> {
@@ -351,7 +345,7 @@ export class SessionModel {
    * @param sessionId 会话ID
    * @returns 是否删除成功
    */
-  static async softDelete(context: RequestContext, sessionId: string): Promise<boolean> {
+  static async softDelete(context: AuthRequestContext, sessionId: string): Promise<boolean> {
     const result = await prisma.session.updateMany({
       where: { 
         id: sessionId,
@@ -372,7 +366,7 @@ export class SessionModel {
    * @param sessionId 会话ID
    * @returns 是否删除成功
    */
-  static async hardDelete(context: RequestContext, sessionId: string): Promise<boolean> {
+  static async hardDelete(context: AuthRequestContext, sessionId: string): Promise<boolean> {
     const result = await prisma.session.deleteMany({
       where: {
         id: sessionId
@@ -388,7 +382,7 @@ export class SessionModel {
    * @param sessionId 会话ID
    * @returns 是否存在
    */
-  static async exists(context: RequestContext, sessionId: string): Promise<boolean> {
+  static async exists(context: AuthRequestContext, sessionId: string): Promise<boolean> {
     const count = await prisma.session.count({
       where: {
         id: sessionId,
@@ -405,7 +399,7 @@ export class SessionModel {
    * @param sessionId 会话ID
    * @returns 是否有效
    */
-  static async isValid(context: RequestContext, sessionId: string): Promise<boolean> {
+  static async isValid(context: AuthRequestContext, sessionId: string): Promise<boolean> {
     const count = await prisma.session.count({
       where: {
         id: sessionId,
@@ -427,7 +421,7 @@ export class SessionModel {
    * @returns 会话总数
    */
   static async getTotalCount(
-    context: RequestContext, 
+    context: AuthRequestContext, 
     tenantId?: string, 
     includeDeleted: boolean = false
   ): Promise<number> {
@@ -453,7 +447,7 @@ export class SessionModel {
    * @returns 操作结果
    */
   static async softDeleteMultiple(
-    context: RequestContext,
+    context: AuthRequestContext,
     sessionIds: string[]
   ): Promise<DatabaseResult<null>> {
     try {
@@ -487,7 +481,7 @@ export class SessionModel {
    * @returns 操作结果
    */
   static async hardDeleteMultiple(
-    context: RequestContext,
+    context: AuthRequestContext,
     sessionIds: string[]
   ): Promise<DatabaseResult<null>> {
     try {
@@ -516,7 +510,7 @@ export class SessionModel {
    * @returns 操作结果
    */
   static async softDeleteByTenantId(
-    context: RequestContext,
+    context: AuthRequestContext,
     tenantId: string
   ): Promise<DatabaseResult<null>> {
     try {
@@ -550,7 +544,7 @@ export class SessionModel {
    * @returns 操作结果
    */
   static async cleanupExpiredSessions(
-    context: RequestContext,
+    context: AuthRequestContext,
     beforeDate: Date = new Date()
   ): Promise<DatabaseResult<null>> {
     try {
@@ -586,7 +580,7 @@ export class SessionModel {
    * @returns 操作结果
    */
   static async purgeDeletedSessions(
-    context: RequestContext,
+    context: AuthRequestContext,
     beforeDate: Date
   ): Promise<DatabaseResult<null>> {
     try {
@@ -618,7 +612,7 @@ export class SessionModel {
    * @param tenantId 租户ID（可选）
    * @returns 活跃会话数量
    */
-  static async getActiveSessionCount(context: RequestContext, tenantId?: string): Promise<number> {
+  static async getActiveSessionCount(context: AuthRequestContext, tenantId?: string): Promise<number> {
     const whereConditions: any = {
       deleted_at: null,
       expires_at: {
@@ -644,7 +638,7 @@ export class SessionModel {
    * @returns 按日期分组的统计结果
    */
   static async getSessionStatsByDate(
-    context: RequestContext,
+    context: AuthRequestContext,
     startDate: Date,
     endDate: Date,
     tenantId?: string

@@ -9,10 +9,10 @@ import {
   TenantCreateData,
   TenantUpdateData,
   TenantFilter,
-  RequestContext,
-  PaginationResult,
+  AuthRequestContext,
   DatabaseResult
 } from '../types';
+import { PaginationResult } from '../types/api';
 
 /**
  * 租户数据访问对象
@@ -37,7 +37,7 @@ export class TenantModel {
    * @param tenantData 租户创建数据
    * @returns 创建的租户记录
    */
-  static async create(context: RequestContext, tenantData: TenantCreateData): Promise<TenantEntity> {
+  static async create(context: AuthRequestContext, tenantData: TenantCreateData): Promise<TenantEntity> {
     const tenant = await prisma.tenant.create({
       data: {
         email: tenantData.email.toLowerCase().trim(),
@@ -61,7 +61,7 @@ export class TenantModel {
    * @param tenantId 租户ID
    * @returns 租户记录或null
    */
-  static async findById(context: RequestContext, tenantId: string): Promise<TenantEntity | null> {
+  static async findById(context: AuthRequestContext, tenantId: string): Promise<TenantEntity | null> {
     const tenant = await prisma.tenant.findFirst({
       where: { 
         id: tenantId
@@ -84,7 +84,7 @@ export class TenantModel {
    * @param email 邮箱地址
    * @returns 租户记录或null
    */
-  static async findByEmail(context: RequestContext, email: string): Promise<TenantEntity | null> {
+  static async findByEmail(context: AuthRequestContext, email: string): Promise<TenantEntity | null> {
     const tenant = await prisma.tenant.findFirst({
       where: { 
         email: email.toLowerCase().trim()
@@ -107,7 +107,7 @@ export class TenantModel {
    * @param subdomain 子域名
    * @returns 租户记录或null
    */
-  static async findBySubdomain(context: RequestContext, subdomain: string): Promise<TenantEntity | null> {
+  static async findBySubdomain(context: AuthRequestContext, subdomain: string): Promise<TenantEntity | null> {
     const tenant = await prisma.tenant.findFirst({
       where: { 
         subdomain: subdomain.toLowerCase().trim()
@@ -133,7 +133,7 @@ export class TenantModel {
    * @returns 分页租户结果
    */
   static async findWithPagination(
-    context: RequestContext,
+    context: AuthRequestContext,
     page: number = 1,
     limit: number = 20,
     filters: Partial<TenantFilter> = {}
@@ -249,7 +249,7 @@ export class TenantModel {
    * @returns 更新后的租户记录或null
    */
   static async updateById(
-    context: RequestContext,
+    context: AuthRequestContext,
     tenantId: string,
     updateData: TenantUpdateData
   ): Promise<TenantEntity | null> {
@@ -281,7 +281,7 @@ export class TenantModel {
    * @returns 更新后的租户记录或null
    */
   static async updateSubscription(
-    context: RequestContext,
+    context: AuthRequestContext,
     tenantId: string,
     subscriptionData: {
       subscription_status?: 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'CANCELED';
@@ -319,7 +319,7 @@ export class TenantModel {
    * @returns 更新后的租户记录或null
    */
   static async updateEmailVerification(
-    context: RequestContext,
+    context: AuthRequestContext,
     tenantId: string,
     isVerified: boolean
   ): Promise<TenantEntity | null> {
@@ -348,7 +348,7 @@ export class TenantModel {
    * @param tenantId 租户ID
    * @returns 是否删除成功
    */
-  static async softDelete(context: RequestContext, tenantId: string): Promise<boolean> {
+  static async softDelete(context: AuthRequestContext, tenantId: string): Promise<boolean> {
     const result = await prisma.tenant.updateMany({
       where: {
         id: tenantId
@@ -368,7 +368,7 @@ export class TenantModel {
    * @param tenantId 租户ID
    * @returns 是否删除成功
    */
-  static async hardDelete(context: RequestContext, tenantId: string): Promise<boolean> {
+  static async hardDelete(context: AuthRequestContext, tenantId: string): Promise<boolean> {
     const result = await prisma.tenant.deleteMany({
       where: {
         id: tenantId
@@ -384,7 +384,7 @@ export class TenantModel {
    * @param tenantId 租户ID
    * @returns 是否存在
    */
-  static async exists(context: RequestContext, tenantId: string): Promise<boolean> {
+  static async exists(context: AuthRequestContext, tenantId: string): Promise<boolean> {
     const count = await prisma.tenant.count({
       where: {
         id: tenantId
@@ -401,7 +401,7 @@ export class TenantModel {
    * @param excludeTenantId 排除的租户ID（用于更新时检查）
    * @returns 是否已存在
    */
-  static async emailExists(context: RequestContext, email: string, excludeTenantId?: string): Promise<boolean> {
+  static async emailExists(context: AuthRequestContext, email: string, excludeTenantId?: string): Promise<boolean> {
     const whereCondition: any = {
       email: email.toLowerCase().trim()
     };
@@ -424,7 +424,7 @@ export class TenantModel {
    * @param excludeTenantId 排除的租户ID（用于更新时检查）
    * @returns 是否已存在
    */
-  static async subdomainExists(context: RequestContext, subdomain: string, excludeTenantId?: string): Promise<boolean> {
+  static async subdomainExists(context: AuthRequestContext, subdomain: string, excludeTenantId?: string): Promise<boolean> {
     const whereCondition: any = {
       subdomain: subdomain.toLowerCase().trim()
     };
@@ -445,7 +445,7 @@ export class TenantModel {
    * @param context 请求上下文
    * @returns 租户总数
    */
-  static async getTotalCount(context: RequestContext): Promise<number> {
+  static async getTotalCount(context: AuthRequestContext): Promise<number> {
     return await prisma.tenant.count();
   }
 
@@ -456,7 +456,7 @@ export class TenantModel {
    * @param context 请求上下文
    * @returns 按状态分组的统计结果
    */
-  static async getCountBySubscriptionStatus(context: RequestContext): Promise<Record<string, number>> {
+  static async getCountBySubscriptionStatus(context: AuthRequestContext): Promise<Record<string, number>> {
     const result = await prisma.tenant.groupBy({
       by: ['subscription_status'],
       _count: {
@@ -475,7 +475,7 @@ export class TenantModel {
    * @param context 请求上下文
    * @returns 按计划分组的统计结果
    */
-  static async getCountBySubscriptionPlan(context: RequestContext): Promise<Record<string, number>> {
+  static async getCountBySubscriptionPlan(context: AuthRequestContext): Promise<Record<string, number>> {
     const result = await prisma.tenant.groupBy({
       by: ['subscription_plan'],
       _count: {
@@ -496,7 +496,7 @@ export class TenantModel {
    * @returns 即将到期的租户列表
    */
   static async getTrialExpiringSoon(
-    context: RequestContext,
+    context: AuthRequestContext,
     daysBeforeExpiry: number = 3
   ): Promise<TenantEntity[]> {
     const expiryDate = new Date();
@@ -525,7 +525,7 @@ export class TenantModel {
    * @returns 操作结果
    */
   static async updateMultipleSubscriptionStatus(
-    context: RequestContext,
+    context: AuthRequestContext,
     tenantIds: string[],
     subscriptionStatus: 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'CANCELED'
   ): Promise<DatabaseResult<null>> {
@@ -559,7 +559,7 @@ export class TenantModel {
    * @returns 操作结果
    */
   static async softDeleteMultiple(
-    context: RequestContext,
+    context: AuthRequestContext,
     tenantIds: string[]
   ): Promise<DatabaseResult<null>> {
     try {
