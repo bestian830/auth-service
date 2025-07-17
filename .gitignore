@@ -67,3 +67,5 @@ temp/
 private-keys/
 public-keys/
 certificates/ 
+
+docker-compose.yml
