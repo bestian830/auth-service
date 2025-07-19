@@ -30,6 +30,7 @@
   "license": "MIT",
   "dependencies": {
     "@prisma/client": "^5.1.1",
+    "@sendgrid/mail": "^8.1.5",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
@@ -70,4 +71,4 @@
     "node": ">=16.0.0",
     "npm": ">=8.0.0"
   }
-} 
+}
