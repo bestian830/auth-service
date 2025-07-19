@@ -1,68 +1,42 @@
 import winston from 'winston';
 import path from 'path';
 import fs from 'fs';
-
-/**
- * 错误日志接口
- * 定义错误日志必须包含的字段
- */
-interface ErrorLogData {
-  tenantId?: string;        // 租户ID
-  timestamp: string;        // 错误发生时间
-  sessionId?: string;       // 相关会话ID
-  errorMessage: string;     // 错误消息
-  errorReason: string;      // 错误原因/堆栈
-  ipAddress?: string;       // 客户端IP地址
-  operation: string;        // 执行的操作
-}
-
-/**
- * 错误上下文接口
- * 用于传递当前操作的上下文信息
- */
-interface ErrorContext {
-  tenantId?: string;
-  sessionId?: string;
-  operation?: string;
-  ipAddress?: string;
-}
+import { ErrorLogData, ErrorContext } from '../types/logger';
+import { LOGGER_CONFIG } from '../constants/logger';
 
 /**
  * 日志目录管理类
  * 负责创建和管理日志目录结构
  */
 class LogDirectoryManager {
-  private static readonly LOG_DIR = 'logs';
-  private static readonly ARCHIVED_DIR = path.join('logs', 'archived');
-
   /**
    * 确保日志目录存在
    */
   static ensureDirectories(): void {
-    if (!fs.existsSync(this.LOG_DIR)) {
-      fs.mkdirSync(this.LOG_DIR, { recursive: true });
+    if (!fs.existsSync(LOGGER_CONFIG.LOG_DIR)) {
+      fs.mkdirSync(LOGGER_CONFIG.LOG_DIR, { recursive: true });
     }
-    if (!fs.existsSync(this.ARCHIVED_DIR)) {
-      fs.mkdirSync(this.ARCHIVED_DIR, { recursive: true });
+    if (!fs.existsSync(LOGGER_CONFIG.ARCHIVED_DIR)) {
+      fs.mkdirSync(LOGGER_CONFIG.ARCHIVED_DIR, { recursive: true });
     }
   }
 
   /**
-   * 清理30天前的归档日志
+   * 清理指定天数前的归档日志
    */
   static cleanOldArchives(): void {
     try {
-      const archiveFiles = fs.readdirSync(this.ARCHIVED_DIR);
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const archiveFiles = fs.readdirSync(LOGGER_CONFIG.ARCHIVED_DIR);
+      const retentionDaysAgo = new Date();
+      retentionDaysAgo.setDate(retentionDaysAgo.getDate() - LOGGER_CONFIG.ARCHIVE_RETENTION_DAYS);
 
       archiveFiles.forEach(file => {
-        const filePath = path.join(this.ARCHIVED_DIR, file);
+        const filePath = path.join(LOGGER_CONFIG.ARCHIVED_DIR, file);
         const stats = fs.statSync(filePath);
         
-        if (stats.mtime < thirtyDaysAgo) {
+        if (stats.mtime < retentionDaysAgo) {
           fs.unlinkSync(filePath);
-          console.log(`${file} has over 30 days, so it has been deleted`);
+          console.log(`${file} has been deleted after ${LOGGER_CONFIG.ARCHIVE_RETENTION_DAYS} days`);
         }
       });
     } catch (error) {
@@ -76,19 +50,16 @@ class LogDirectoryManager {
  * 处理日志文件的归档和轮转
  */
 class LogArchiveManager {
-  private static readonly ERROR_LOG_PATH = path.join('logs', 'error.log');
-  private static readonly MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-
   /**
    * 检查是否需要归档当前日志文件
    */
   static shouldArchive(): boolean {
     try {
-      if (!fs.existsSync(this.ERROR_LOG_PATH)) {
+      if (!fs.existsSync(LOGGER_CONFIG.ERROR_LOG_PATH)) {
         return false;
       }
-      const stats = fs.statSync(this.ERROR_LOG_PATH);
-      return stats.size >= this.MAX_FILE_SIZE;
+      const stats = fs.statSync(LOGGER_CONFIG.ERROR_LOG_PATH);
+      return stats.size >= LOGGER_CONFIG.MAX_FILE_SIZE;
     } catch {
       return false;
     }
@@ -99,7 +70,7 @@ class LogArchiveManager {
    */
   static archiveCurrentLog(): void {
     try {
-      if (!fs.existsSync(this.ERROR_LOG_PATH)) {
+      if (!fs.existsSync(LOGGER_CONFIG.ERROR_LOG_PATH)) {
         return;
       }
 
@@ -111,10 +82,10 @@ class LogArchiveManager {
         .substring(0, 19);
       
       const archiveFileName = `error_${timestamp}.log`;
-      const archivePath = path.join('logs', 'archived', archiveFileName);
+      const archivePath = path.join(LOGGER_CONFIG.ARCHIVED_DIR, archiveFileName);
 
       // 移动当前日志到归档目录
-      fs.renameSync(this.ERROR_LOG_PATH, archivePath);
+      fs.renameSync(LOGGER_CONFIG.ERROR_LOG_PATH, archivePath);
       console.log(`Log has been archived to: ${archiveFileName}`);
 
       // 清理旧归档
@@ -145,20 +116,20 @@ class AutoErrorCaptureSystem {
 
     // 创建Winston日志实例
     this.winstonLogger = winston.createLogger({
-      level: 'error',
+      level: LOGGER_CONFIG.WINSTON_CONFIG.level,
       format: winston.format.combine(
         winston.format.timestamp({
-          format: 'YYYY-MM-DD HH:mm:ss'
+          format: LOGGER_CONFIG.WINSTON_CONFIG.timestampFormat
         }),
         winston.format.json()
       ),
       transports: [
         new winston.transports.File({
-          filename: 'logs/error.log',
-          level: 'error',
-          maxsize: 5 * 1024 * 1024, // 5MB
-          maxFiles: 1,
-          tailable: false
+          filename: LOGGER_CONFIG.ERROR_LOG_PATH,
+          level: LOGGER_CONFIG.WINSTON_CONFIG.level,
+          maxsize: LOGGER_CONFIG.WINSTON_CONFIG.maxsize,
+          maxFiles: LOGGER_CONFIG.WINSTON_CONFIG.maxFiles,
+          tailable: LOGGER_CONFIG.WINSTON_CONFIG.tailable
         })
       ],
       silent: false
@@ -280,20 +251,20 @@ class AutoErrorCaptureSystem {
   private recreateLogger(): void {
     this.winstonLogger.close();
     this.winstonLogger = winston.createLogger({
-      level: 'error',
+      level: LOGGER_CONFIG.WINSTON_CONFIG.level,
       format: winston.format.combine(
         winston.format.timestamp({
-          format: 'YYYY-MM-DD HH:mm:ss'
+          format: LOGGER_CONFIG.WINSTON_CONFIG.timestampFormat
         }),
         winston.format.json()
       ),
       transports: [
         new winston.transports.File({
-          filename: 'logs/error.log',
-          level: 'error',
-          maxsize: 5 * 1024 * 1024,
-          maxFiles: 1,
-          tailable: false
+          filename: LOGGER_CONFIG.ERROR_LOG_PATH,
+          level: LOGGER_CONFIG.WINSTON_CONFIG.level,
+          maxsize: LOGGER_CONFIG.WINSTON_CONFIG.maxsize,
+          maxFiles: LOGGER_CONFIG.WINSTON_CONFIG.maxFiles,
+          tailable: LOGGER_CONFIG.WINSTON_CONFIG.tailable
         })
       ],
       silent: false
