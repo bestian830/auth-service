@@ -69,3 +69,4 @@ public-keys/
 certificates/ 
 
 docker-compose.yml
+docs/config/*
