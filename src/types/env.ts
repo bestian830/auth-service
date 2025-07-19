@@ -17,15 +17,13 @@ export interface EnvConfig {
   stripeSecretKey?: string;
   stripeWebhookSecret?: string;
   
-  // 邮件配置
+  // SendGrid 邮件配置
+  sendgridApiKey: string;
+  emailSenderAddress: string;
+  
+  // 邮件模板配置
   email: {
-    smtpHost?: string;
-    smtpPort: number;
-    smtpSecure: boolean;
-    smtpUser?: string;
-    smtpPass?: string;
     fromName: string;
-    fromAddress: string;
     baseUrl: string;
     verificationPath: string;
     resetPasswordPath: string;

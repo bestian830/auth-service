@@ -1,3 +1,6 @@
+> 所有类型定义请放置于 types/email.ts，所有常量配置请放置于 constants/email.ts。config/email.ts 文件仅负责初始化并导出 SendGrid 邮件客户端，无业务逻辑，无模板渲染，无动态参数构造。
+
+```ts
 /**
  * 邮件发送配置模块（SendGrid）
  * 主要职责：基于环境变量配置 SendGrid 邮件服务，初始化全局 API 客户端。

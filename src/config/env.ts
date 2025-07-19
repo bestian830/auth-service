@@ -67,15 +67,13 @@ export const env: EnvConfig = {
   stripeSecretKey: process.env.STRIPE_SECRET_KEY,
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
 
-  // 邮件配置
+  // SendGrid 邮件配置
+  sendgridApiKey: required('SENDGRID_API_KEY'),
+  emailSenderAddress: required('EMAIL_SENDER_ADDRESS'),
+
+  // 邮件模板配置
   email: {
-    smtpHost: process.env.SMTP_HOST,
-    smtpPort: getNumber('SMTP_PORT', 587),
-    smtpSecure: getBoolean('SMTP_SECURE', false), // false for 587, true for 465
-    smtpUser: process.env.SMTP_USER,
-    smtpPass: process.env.SMTP_PASS,
     fromName: process.env.EMAIL_FROM_NAME || 'Tymoe',
-    fromAddress: process.env.EMAIL_FROM_ADDRESS || 'noreply@tymoe.com',
     baseUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
     verificationPath: process.env.EMAIL_VERIFICATION_PATH || '/verify-email',
     resetPasswordPath: process.env.EMAIL_RESET_PASSWORD_PATH || '/reset-password',
