@@ -1,5 +1,5 @@
 import bcrypt from 'bcrypt';
-import { config } from '../config/env';
+import { env } from '../config/env';
 
 /**
  * 对明文密码进行加密哈希（注册/重置密码时用）
@@ -7,7 +7,7 @@ import { config } from '../config/env';
  * @param rounds 加密轮数（默认用配置，也可手动传）
  */
 export async function hashPassword(password: string, rounds?: number): Promise<string> {
-  const saltRounds = rounds ?? config.password.bcryptRounds ?? 12;
+  const saltRounds = rounds ?? env.bcryptRounds ?? 12;
   return bcrypt.hash(password, saltRounds);
 }
 
