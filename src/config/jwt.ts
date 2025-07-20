@@ -251,4 +251,57 @@ export const authenticateRequest = async (
   } catch {
     return null;
   }
+};
+
+/**
+ * 生成密码重置token
+ * @param email - 邮箱地址
+ * @param tenantId - 对应租户ID
+ * @returns 带有密码重置信息的JWT token
+ * 执行逻辑：生成一个有效期短的token，类型为'password_reset'，包含jti用于黑名单管理
+ */
+export const generatePasswordResetToken = (
+  email: string,
+  tenantId: string
+): string => {
+  return jwt.sign(
+    {
+      email,
+      tenantId,
+      type: 'password_reset',
+      iss: JWT_CONFIG.ISSUER,
+      aud: JWT_CONFIG.AUDIENCE
+    },
+    env.jwtSecret,
+    {
+      algorithm: JWT_CONFIG.ALGORITHM,
+      expiresIn: JWT_CONFIG.EXPIRY_TIMES.PASSWORD_RESET,
+      jwtid: generateTokenId()
+    }
+  );
+};
+
+/**
+ * 验证密码重置token
+ * @param token - 待验证的token
+ * @returns {email, tenantId} 解析出的payload
+ * 执行逻辑：验证token签名及issuer等元数据，并检查type字段为'password_reset'
+ */
+export const verifyPasswordResetToken = (
+  token: string
+): Promise<{ email: string, tenantId: string }> => {
+  return new Promise((resolve, reject) => {
+    jwt.verify(token, env.jwtSecret, {
+      algorithms: [JWT_CONFIG.ALGORITHM],
+      issuer: JWT_CONFIG.ISSUER,
+      audience: JWT_CONFIG.AUDIENCE
+    }, (error, decoded) => {
+      if (error) return reject(error);
+      const payload = decoded as any;
+      if (payload.type !== 'password_reset') {
+        return reject(new Error('Invalid token type'));
+      }
+      resolve({ email: payload.email, tenantId: payload.tenantId });
+    });
+  });
 }; 

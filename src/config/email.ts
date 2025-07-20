@@ -25,17 +25,20 @@ sgMail.setApiKey(env.sendgridApiKey);
  * @param to - 收件人邮箱地址
  * @param subject - 邮件标题
  * @param html - 邮件 HTML 内容（已渲染）
+ * @param text - 邮件纯文本内容（可选）
  * @returns Promise<void>
  */
 export const sendEmail = async (
   to: string,
   subject: string,
-  html: string
+  html: string,
+  text?: string
 ): Promise<void> => {
   await sgMail.send({
     to,
     from: env.emailSenderAddress,
     subject,
-    html
+    html,
+    text
   });
 };
