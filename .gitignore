@@ -71,3 +71,4 @@ certificates/
 docker-compose.yml
 docs/config/*
 docs/services/*
+docs/prisma/*
