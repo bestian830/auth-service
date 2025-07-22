@@ -14,6 +14,10 @@
 
 import sgMail from '@sendgrid/mail';
 import { env } from './env';
+import { logger } from '../utils';
+
+if (!env.sendgridApiKey) throw new Error('SENDGRID_API_KEY is not defined in environment');
+if (!env.emailSenderAddress) throw new Error('EMAIL_SENDER_ADDRESS is not defined in environment');
 
 /**
  * 初始化 SendGrid API 客户端
@@ -21,12 +25,11 @@ import { env } from './env';
 sgMail.setApiKey(env.sendgridApiKey);
 
 /**
- * 发送邮件封装
- * @param to - 收件人邮箱地址
- * @param subject - 邮件标题
- * @param html - 邮件 HTML 内容（已渲染）
- * @param text - 邮件纯文本内容（可选）
- * @returns Promise<void>
+ * 发送邮件
+ * @param to 收件人
+ * @param subject 标题
+ * @param html 邮件HTML内容（已渲染）
+ * @param text 纯文本内容（可选）
  */
 export const sendEmail = async (
   to: string,
@@ -34,11 +37,17 @@ export const sendEmail = async (
   html: string,
   text?: string
 ): Promise<void> => {
-  await sgMail.send({
-    to,
-    from: env.emailSenderAddress,
-    subject,
-    html,
-    text
-  });
+  try {
+    await sgMail.send({
+      to,
+      from: env.emailSenderAddress,
+      subject,
+      html,
+      text
+    });
+    logger.info('Email sent', { to, subject });
+  } catch (error) {
+    logger.error('Failed to send email', { to, subject, error });
+    throw error;
+  }
 };
