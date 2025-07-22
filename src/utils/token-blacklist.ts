@@ -3,8 +3,9 @@
  * 用于撤销已签发的JWT token
  */
 
-import prisma from '../config/database';
 import { logger } from './logger';
+import { withRedisPrefix } from './redis-prefix';
+import { getRedisClient } from '../config';
 
 /**
  * 添加token到黑名单
@@ -13,20 +14,16 @@ import { logger } from './logger';
  * @param reason 撤销原因
  */
 export const addTokenToBlacklist = async (
-  jti: string, 
-  expiresAt: Date, 
+  jti: string,
+  expiresAt: Date,
   reason: string = 'revoked'
 ): Promise<void> => {
+  const redis = getRedisClient();
+  const key = withRedisPrefix(`token:blacklist:${jti}`);
+  const ttlSeconds = Math.ceil((expiresAt.getTime() - Date.now()) / 1000);
+
   try {
-    await prisma.tokenBlacklist.create({
-      data: {
-        jti,
-        expires_at: expiresAt,
-        reason,
-        created_at: new Date()
-      }
-    });
-    
+    await redis.set(key, reason, { EX: ttlSeconds > 0 ? ttlSeconds : 1 });
     logger.info('Token added to blacklist', { jti, reason });
   } catch (error) {
     logger.error('Failed to add token to blacklist', { jti, error });
@@ -34,75 +31,43 @@ export const addTokenToBlacklist = async (
   }
 };
 
+
 /**
  * 检查token是否在黑名单中
  * @param jti JWT ID
  * @returns 是否被撤销
  */
 export const isTokenBlacklisted = async (jti: string): Promise<boolean> => {
+  const redis = getRedisClient();
+  const key = withRedisPrefix(`token:blacklist:${jti}`);
   try {
-    const blacklistedToken = await prisma.tokenBlacklist.findFirst({
-      where: {
-        jti,
-        expires_at: {
-          gt: new Date() // 只检查未过期的黑名单记录
-        }
-      }
-    });
-    
-    return !!blacklistedToken;
+    const result = await redis.get(key);
+    return !!result;
   } catch (error) {
     logger.error('Failed to check token blacklist', { jti, error });
-    // 安全起见，如果查询失败则认为token有效
+    // 查询失败默认token有效（可根据业务改为默认无效）
     return false;
   }
 };
 
 /**
- * 清理过期的黑名单记录
- * 定期清理可以减少数据库大小
- */
-export const cleanupExpiredBlacklistTokens = async (): Promise<number> => {
-  try {
-    const result = await prisma.tokenBlacklist.deleteMany({
-      where: {
-        expires_at: {
-          lte: new Date()
-        }
-      }
-    });
-    
-    logger.info('Cleaned up expired blacklist tokens', { count: result.count });
-    return result.count;
-  } catch (error) {
-    logger.error('Failed to cleanup expired blacklist tokens', { error });
-    return 0;
-  }
-};
-
-/**
- * 撤销用户的所有token（比如密码重置后）
+ * 撤销用户所有token（如密码重置后，批量撤销）
+ * 实现为：记录一个特殊租户全局撤销时间点
  * @param tenantId 租户ID
  * @param reason 撤销原因
  */
 export const revokeAllUserTokens = async (
-  tenantId: string, 
+  tenantId: string,
   reason: string = 'security_reset'
 ): Promise<void> => {
+  const redis = getRedisClient();
+  const key = withRedisPrefix(`token:user_revoke:${tenantId}`);
+  const now = Date.now();
+  // 推荐 30 天后过期（access token 最长不应超过这个）
+  const ttlSeconds = 30 * 24 * 60 * 60;
   try {
-    // 这里我们通过记录一个特殊的黑名单记录来标记
-    // 所有在此时间之前签发的token都无效
-    await prisma.tokenBlacklist.create({
-      data: {
-        jti: `user_revoke_${tenantId}_${Date.now()}`,
-        tenant_id: tenantId,
-        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30天后过期
-        reason,
-        revoke_all_before: new Date(),
-        created_at: new Date()
-      }
-    });
-    
+    // 用当前时间作为revoke_before
+    await redis.set(key, now.toString(), { EX: ttlSeconds });
     logger.info('Revoked all tokens for user', { tenantId, reason });
   } catch (error) {
     logger.error('Failed to revoke all user tokens', { tenantId, error });
@@ -114,30 +79,22 @@ export const revokeAllUserTokens = async (
  * 检查用户token是否因为全局撤销而无效
  * @param tenantId 租户ID
  * @param tokenIssuedAt token签发时间
+ * @returns 是否被全局撤销
  */
 export const isUserTokenRevoked = async (
-  tenantId: string, 
+  tenantId: string,
   tokenIssuedAt: Date
 ): Promise<boolean> => {
+  const redis = getRedisClient();
+  const key = withRedisPrefix(`token:user_revoke:${tenantId}`);
   try {
-    const globalRevoke = await prisma.tokenBlacklist.findFirst({
-      where: {
-        tenant_id: tenantId,
-        revoke_all_before: {
-          gte: tokenIssuedAt
-        },
-        expires_at: {
-          gt: new Date()
-        }
-      },
-      orderBy: {
-        revoke_all_before: 'desc'
-      }
-    });
-    
-    return !!globalRevoke;
+    const revokeTimestampStr = await redis.get(key);
+    if (!revokeTimestampStr) return false;
+    const revokeBefore = parseInt(revokeTimestampStr, 10);
+    return tokenIssuedAt.getTime() <= revokeBefore;
   } catch (error) {
     logger.error('Failed to check user token revocation', { tenantId, error });
+    // 查询失败默认未撤销
     return false;
   }
-}; 
+};

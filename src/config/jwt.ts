@@ -1,13 +1,15 @@
-import jwt from 'jsonwebtoken';
+import * as jwt from 'jsonwebtoken';
 import { env } from './env';
-import { JWT_CONFIG } from '../constants/jwt';
-import { AuthJwtPayload, TokenGenerationParams } from '../types/jwt';
-import { TokenRefreshResult } from '../types/auth';
-import {
-  addTokenToBlacklist,
-  isTokenBlacklisted,
-  isUserTokenRevoked
-} from '../utils/token-blacklist';
+import { JWT_CONFIG } from '../constants';
+import { AuthJwtPayload, TokenGenerationParams, TokenRefreshResult } from '../types';
+import { addTokenToBlacklist, isTokenBlacklisted, isUserTokenRevoked } from '../utils';
+
+
+//生成唯一Token ID
+const generateTokenId = (): string => {
+  return Math.random().toString(26).substring(2, 15) + 
+  Math.random().toString(26).substring(2, 15);
+};
 
 /**
  * 生成 JWT Token
@@ -18,12 +20,20 @@ import {
  */
 export const generateToken = (
   payload: Omit<AuthJwtPayload, 'iat' | 'exp' | 'iss' | 'aud' | 'jti'>,
-  type: 'access' | 'refresh' = 'access'
+  type: AuthJwtPayload['type'] = 'access'
 ): string => {
-  const secret = type === 'access' ? env.jwtSecret : env.jwtRefreshSecret;
-  const expiresIn = type === 'access'
-    ? JWT_CONFIG.EXPIRY_TIMES.ACCESS_TOKEN
-    : JWT_CONFIG.EXPIRY_TIMES.REFRESH_TOKEN;
+  let secret = type === 'refresh' ? env.jwtRefreshSecret : env.jwtSecret;
+  if (!secret) throw new Error('JWT secret is not defined');
+  let expiresIn: string | number = JWT_CONFIG.EXPIRY_TIMES.ACCESS_TOKEN;
+
+  // 不同type用不同secret/过期时间
+  if (type === 'refresh') {
+    expiresIn = JWT_CONFIG.EXPIRY_TIMES.REFRESH_TOKEN;
+  } else if (type === 'email_verification') {
+    expiresIn = JWT_CONFIG.EXPIRY_TIMES.EMAIL_VERIFICATION;
+  } else if (type === 'password_reset') {
+    expiresIn = JWT_CONFIG.EXPIRY_TIMES.PASSWORD_RESET;
+  }
 
   return jwt.sign(
     {
@@ -32,12 +42,12 @@ export const generateToken = (
       iss: JWT_CONFIG.ISSUER,
       aud: JWT_CONFIG.AUDIENCE
     },
-    secret,
+    secret as jwt.Secret,
     {
-      algorithm: JWT_CONFIG.ALGORITHM,
+      algorithm: JWT_CONFIG.ALGORITHM as jwt.Algorithm,
       expiresIn,
       jwtid: generateTokenId()
-    }
+    } as jwt.SignOptions
   );
 };
 
@@ -50,23 +60,32 @@ export const generateToken = (
  */
 export const verifyToken = (
   token: string,
-  type: 'access' | 'refresh' = 'access'
+  type: AuthJwtPayload['type']
 ): Promise<AuthJwtPayload> => {
   return new Promise(async (resolve, reject) => {
-    const secret = type === 'access' ? env.jwtSecret : env.jwtRefreshSecret;
+    let secret = env.jwtSecret;
+    if (type === 'refresh') secret = env.jwtRefreshSecret;
 
-    jwt.verify(token, secret, {
-      algorithms: [JWT_CONFIG.ALGORITHM],
+    jwt.verify(token, secret as jwt.Secret, {
+      algorithms: [JWT_CONFIG.ALGORITHM as jwt.Algorithm],
       issuer: JWT_CONFIG.ISSUER,
       audience: JWT_CONFIG.AUDIENCE
-    }, async (error, decoded) => {
+    }, async (error: any, decoded: any) => {
       if (error) return reject(error);
 
       const payload = decoded as AuthJwtPayload;
 
       if (payload.type !== type) return reject(new Error('Invalid token type'));
-      if (payload.jti && await isTokenBlacklisted(payload.jti)) return reject(new Error('Token has been revoked'));
-      if (payload.iat && await isUserTokenRevoked(payload.tenantId, new Date(payload.iat * 1000))) {
+
+      // 黑名单机制只对 access/refresh/password_reset 生效
+      if (['access', 'refresh', 'password_reset'].includes(type) && payload.jti) {
+        if (await isTokenBlacklisted(payload.jti)) return reject(new Error('Token has been revoked'));
+      }
+      // 支持租户级别token撤销（如批量下线/密码重置全作废）
+      if (payload.iat && payload.tenantId &&
+        ['access', 'refresh'].includes(type) &&
+        await isUserTokenRevoked(payload.tenantId, new Date(payload.iat * 1000))
+      ) {
         return reject(new Error('Token has been revoked due to security reset'));
       }
 
@@ -87,8 +106,8 @@ export const generateTokenPair = (tenantData: TokenGenerationParams) => {
     email: tenantData.email,
     storeName: tenantData.storeName,
     subdomain: tenantData.subdomain,
-    subscriptionStatus: tenantData.subscriptionStatus as any,
-    subscriptionPlan: tenantData.subscriptionPlan as any,
+    subscriptionStatus: tenantData.subscriptionStatus as AuthJwtPayload['subscriptionStatus'],
+    subscriptionPlan: tenantData.subscriptionPlan as AuthJwtPayload['subscriptionPlan'],
     emailVerified: tenantData.emailVerified,
     sessionId: tenantData.sessionId
   };
@@ -173,16 +192,6 @@ export const extractTokenFromHeader = (authHeader?: string): string | null => {
 };
 
 /**
- * 生成唯一Token ID
- * @returns 字符串格式的唯一ID
- * 执行逻辑：通过两次随机base36连接生成伪唯一标识符，用于token黑名单识别。
- */
-const generateTokenId = (): string => {
-  return Math.random().toString(36).substring(2, 15) +
-         Math.random().toString(36).substring(2, 15);
-};
-
-/**
  * 生成邮箱验证token
  * @param email - 邮箱地址
  * @param tenantId - 对应租户ID
@@ -193,21 +202,9 @@ export const generateEmailVerificationToken = (
   email: string,
   tenantId: string
 ): string => {
-  return jwt.sign(
-    {
-      email,
-      tenantId,
-      type: 'email_verification',
-      iss: JWT_CONFIG.ISSUER,
-      aud: JWT_CONFIG.AUDIENCE
-    },
-    env.jwtSecret,
-    {
-      algorithm: JWT_CONFIG.ALGORITHM,
-      expiresIn: JWT_CONFIG.EXPIRY_TIMES.EMAIL_VERIFICATION
-    }
-  );
+  return generateToken({ email, tenantId, type: 'email_verification' }, 'email_verification');
 };
+
 
 /**
  * 验证邮箱验证token
@@ -219,17 +216,17 @@ export const verifyEmailVerificationToken = (
   token: string
 ): Promise<{ email: string, tenantId: string }> => {
   return new Promise((resolve, reject) => {
-    jwt.verify(token, env.jwtSecret, {
-      algorithms: [JWT_CONFIG.ALGORITHM],
+    jwt.verify(token, env.jwtSecret as jwt.Secret, {
+      algorithms: [JWT_CONFIG.ALGORITHM as jwt.Algorithm],
       issuer: JWT_CONFIG.ISSUER,
       audience: JWT_CONFIG.AUDIENCE
-    }, (error, decoded) => {
+    }, (error: any, decoded: any) => {
       if (error) return reject(error);
-      const payload = decoded as any;
+      const payload = decoded as AuthJwtPayload;
       if (payload.type !== 'email_verification') {
         return reject(new Error('Invalid token type'));
       }
-      resolve({ email: payload.email, tenantId: payload.tenantId });
+      resolve({ email: payload.email!, tenantId: payload.tenantId });
     });
   });
 };
@@ -245,7 +242,6 @@ export const authenticateRequest = async (
 ): Promise<AuthJwtPayload | null> => {
   const token = extractTokenFromHeader(authHeader);
   if (!token) return null;
-
   try {
     return await verifyToken(token, 'access');
   } catch {
@@ -254,31 +250,13 @@ export const authenticateRequest = async (
 };
 
 /**
- * 生成密码重置token
- * @param email - 邮箱地址
- * @param tenantId - 对应租户ID
- * @returns 带有密码重置信息的JWT token
- * 执行逻辑：生成一个有效期短的token，类型为'password_reset'，包含jti用于黑名单管理
+ * 生成密码重置 token（type=password_reset）
  */
 export const generatePasswordResetToken = (
   email: string,
   tenantId: string
 ): string => {
-  return jwt.sign(
-    {
-      email,
-      tenantId,
-      type: 'password_reset',
-      iss: JWT_CONFIG.ISSUER,
-      aud: JWT_CONFIG.AUDIENCE
-    },
-    env.jwtSecret,
-    {
-      algorithm: JWT_CONFIG.ALGORITHM,
-      expiresIn: JWT_CONFIG.EXPIRY_TIMES.PASSWORD_RESET,
-      jwtid: generateTokenId()
-    }
-  );
+  return generateToken({ email, tenantId, type: 'password_reset' }, 'password_reset');
 };
 
 /**
@@ -291,17 +269,17 @@ export const verifyPasswordResetToken = (
   token: string
 ): Promise<{ email: string, tenantId: string }> => {
   return new Promise((resolve, reject) => {
-    jwt.verify(token, env.jwtSecret, {
-      algorithms: [JWT_CONFIG.ALGORITHM],
+    jwt.verify(token, env.jwtSecret as jwt.Secret, {
+      algorithms: [JWT_CONFIG.ALGORITHM as jwt.Algorithm],
       issuer: JWT_CONFIG.ISSUER,
       audience: JWT_CONFIG.AUDIENCE
-    }, (error, decoded) => {
+    }, (error: any, decoded: any) => {
       if (error) return reject(error);
-      const payload = decoded as any;
+      const payload = decoded as AuthJwtPayload;
       if (payload.type !== 'password_reset') {
         return reject(new Error('Invalid token type'));
       }
-      resolve({ email: payload.email, tenantId: payload.tenantId });
+      resolve({ email: payload.email!, tenantId: payload.tenantId });
     });
   });
-}; 
+};
