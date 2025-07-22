@@ -1,9 +1,9 @@
 // auth-service/src/config/database.ts
-import { PrismaClient } from '../../generated/prisma';
-import { logger } from '../utils/logger';
+import { PrismaClient } from '@prisma/client';
+import { logger, delay } from '../utils';
 import { env } from './env';
-import { DATABASE_CONFIG } from '../constants/database';
-import type { DatabaseConnectionStatus } from '../types/database';
+import { DATABASE_CONFIG } from '../constants';
+import type { DatabaseConnectionStatus } from '../types';
 
 let prisma: PrismaClient;
 
@@ -41,14 +41,6 @@ if (env.nodeEnv === 'production') {
   }
   prisma = global.__prisma;
 }
-
-/**
- * 延迟函数
- * @param ms 毫秒数
- * @returns Promise<void>
- * 执行逻辑：等待指定时间后 resolve，用于实现连接重试延时。
- */
-const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * 尝试连接数据库（带重试机制）
@@ -100,7 +92,7 @@ export const initDatabase = async (): Promise<void> => {
  */
 export const testConnection = async (): Promise<boolean> => {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await prisma.$queryRawUnsafe(`SELECT 1`);
     logger.info('✅ database connection test successful');
     return true;
   } catch (error) {
@@ -116,7 +108,7 @@ export const testConnection = async (): Promise<boolean> => {
  */
 export const getConnectionStatus = async (): Promise<DatabaseConnectionStatus> => {
   try {
-    const result = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    const result = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>`
       SELECT count(*) as count FROM pg_stat_activity WHERE datname = current_database()
     `;
     const connectionCount = Number(result[0]?.count || 0);
@@ -192,5 +184,4 @@ process.on('SIGINT', gracefulShutdown);
 process.on('SIGTERM', gracefulShutdown);
 process.on('beforeExit', gracefulShutdown);
 
-export { DATABASE_CONFIG };
 export default prisma;
