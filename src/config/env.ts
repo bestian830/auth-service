@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { EnvConfig } from '../types/env';
+import { EnvConfig } from '../types';
 
 // 加载环境变量
 dotenv.config();
@@ -57,15 +57,14 @@ export const env: EnvConfig = {
   // 数据库配置
   databaseUrl: required('DATABASE_URL'),
 
+  // Redis 配置
+  redisUrl: required('REDIS_URL'),
+
   // JWT 配置
   jwtSecret: required('JWT_SECRET'),
   jwtRefreshSecret: required('JWT_REFRESH_SECRET'),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '15m',
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
-
-  // Stripe 支付配置
-  stripeSecretKey: process.env.STRIPE_SECRET_KEY,
-  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
 
   // SendGrid 邮件配置
   sendgridApiKey: required('SENDGRID_API_KEY'),
@@ -103,8 +102,8 @@ export const env: EnvConfig = {
   corsOrigin: getArray('CORS_ORIGIN', ['http://localhost:3000', 'http://localhost:5173']),
 
   // 安全配置
-  sessionTimeout: getNumber('SESSION_TIMEOUT', 3600), // 1小时
+  sessionTimeout: getNumber('SESSION_TIMEOUT', 360000), // 1小时
   maxLoginAttempts: getNumber('MAX_LOGIN_ATTEMPTS', 5),
-  lockoutDuration: getNumber('LOCKOUT_DURATION', 1800), // 30分钟
+  lockoutDuration: getNumber('LOCKOUT_DURATION', 180000), // 30分钟
   requireEmailVerification: getBoolean('REQUIRE_EMAIL_VERIFICATION', true),
 };
