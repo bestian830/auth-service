@@ -12,15 +12,20 @@
  * 4. 设置暴露头部（让前端可读取 Session-Id / Tenant-Id / Refresh-Token 等）
  */
 
-import { AUTH_HEADERS } from '../types/auth';
+import { get } from 'http';
+import { AUTH_HEADERS } from '../types';
+
+const getCorsOrigin = (): string[] => {
+  const raw = process.env.CORS_ORIGIN || 'http://localhost:3002';
+  if (!raw) return ['http://localhost:3000'];
+  return raw.split(',').map(origin => origin.trim());
+};
 
 /**
  * 跨域配置对象
  */
 export const corsConfig = {
-  origin: process.env.CORS_ORIGIN
-    ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-    : ['http://localhost:3000'],
+  origin: getCorsOrigin(),
   credentials: true,
   optionsSuccessStatus: 200,
   allowedHeaders: [
