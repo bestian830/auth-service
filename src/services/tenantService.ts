@@ -15,32 +15,66 @@ const prisma = new PrismaClient();
  * 注册新租户
  */
 export async function registerTenant(input: RegisterTenantInput): Promise<TenantInfo> {
-  // 批量唯一性校验（只查一次库）
+  // 查未删除的唯一性
   const conflict = await prisma.tenant.findFirst({
     where: {
       OR: [
         { email: input.email },
         { subdomain: input.subdomain }
-      ]
+      ],
+      deleted_at: null
     }
   });
   if (conflict) {
     if (conflict.email === input.email) throw new Error(TENANT_ERRORS.EMAIL_EXISTS);
     if (conflict.subdomain === input.subdomain) throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
   }
-  const passwordHash = await hashPassword(input.password);
-  const tenant = await prisma.tenant.create({
-    data: {
-      email: input.email,
-      phone: input.phone,
-      password_hash: passwordHash,
-      store_name: input.storeName,
-      subdomain: input.subdomain,
-      address: input.address,
-      email_verified_at: null
+
+  // 查软删除的账号
+  const deletedTenant = await prisma.tenant.findFirst({
+    where: {
+      OR: [
+        { email: input.email },
+        { subdomain: input.subdomain }
+      ],
+      deleted_at: { not: null }
     }
   });
-  logger.info('Tenant registered', { tenantId: tenant.id });
+
+  const passwordHash = await hashPassword(input.password);
+
+  let tenant;
+  if (deletedTenant) {
+    // 账号恢复
+    tenant = await prisma.tenant.update({
+      where: { id: deletedTenant.id },
+      data: {
+        password_hash: passwordHash,
+        store_name: input.storeName,
+        subdomain: input.subdomain,
+        address: input.address,
+        phone: input.phone,
+        deleted_at: null,
+        email_verified_at: null,
+        updated_at: new Date()
+      }
+    });
+    logger.info('Tenant restored (soft undelete)', { tenantId: tenant.id });
+  } else {
+    // 新建账号
+    tenant = await prisma.tenant.create({
+      data: {
+        email: input.email,
+        phone: input.phone,
+        password_hash: passwordHash,
+        store_name: input.storeName,
+        subdomain: input.subdomain,
+        address: input.address,
+        email_verified_at: null
+      }
+    });
+    logger.info('Tenant registered', { tenantId: tenant.id });
+  }
   return mapTenantInfo(tenant);
 }
 
