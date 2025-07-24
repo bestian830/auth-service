@@ -86,7 +86,7 @@ export async function updateTenantInfo(input: UpdateTenantInput): Promise<Tenant
   const orConditions = [
     input.email ? { email: input.email } : undefined,
     input.subdomain ? { subdomain: input.subdomain } : undefined,
-  ].filter(Boolean); // 去除 undefined
+  ].filter(Boolean);
 
   if (orConditions.length > 0) {
     const conflict = await prisma.tenant.findFirst({
@@ -101,16 +101,28 @@ export async function updateTenantInfo(input: UpdateTenantInput): Promise<Tenant
     }
   }
 
+  // 查询现有tenant信息（用于对比email是否变更）
+  const oldTenant = await prisma.tenant.findUnique({ where: { id: input.tenantId } });
+  if (!oldTenant) throw new Error(TENANT_ERRORS.TENANT_NOT_FOUND);
+
+  const updateData: any = {
+    store_name: input.storeName,
+    subdomain: input.subdomain,
+    phone: input.phone,
+    address: input.address,
+    email: input.email,
+  };
+
+  // ⚠️ 邮箱变更才重置邮箱验证状态
+  if (input.email && input.email !== oldTenant.email) {
+    updateData.email_verified_at = null;
+  }
+
   const tenant = await prisma.tenant.update({
     where: { id: input.tenantId },
-    data: {
-      store_name: input.storeName,
-      subdomain: input.subdomain,
-      phone: input.phone,
-      address: input.address,
-      email: input.email
-    }
+    data: updateData,
   });
+
   logger.info('Tenant updated', { tenantId: tenant.id });
   return mapTenantInfo(tenant);
 }

@@ -5,3 +5,4 @@ export * from './redis-prefix';
 export * from './redis-helper';
 export * from './token-blacklist';
 export * from './password';
+export * from './loginLock';
