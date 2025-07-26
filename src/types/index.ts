@@ -5,3 +5,4 @@ export * from './jwt_types';
 export * from './auth_types';
 export * from './tenantService';
 export * from './authService';
+export * from './sessionService';

@@ -5,6 +5,7 @@ import { LoginInput, AuthResult, LogoutInput, RefreshInput } from '../types';
 import { AUTH_ERRORS } from '../constants';
 import { comparePassword, logger, checkLoginLock, recordLoginFail, clearLoginFail } from '../utils';
 import { generateTokenPair, revokeToken, refreshAccessToken, verifyToken } from '../config';
+import { createSession } from './sessionService';
 
 // 初始化 Prisma
 const prisma = new PrismaClient();
@@ -52,7 +53,16 @@ export async function login(input: LoginInput): Promise<AuthResult> {
   // 登录成功，清除计数
   await clearLoginFail(input.email, input.ip);
 
-  // 生成token对
+  // === 1. 生成 Session，获得 sessionId ===
+  const sessionResult = await createSession({
+    tenantId: tenant.id,
+    refreshToken: undefined,      // 先填 undefined，token 对生成后可补写进 session 表（如需保存的话）
+    userAgent: input.userAgent,   // 用户请求头传入
+    ip: input.ip,
+    deviceType: input.deviceType, // 可选
+  });
+
+  // === 2. 用 sessionId 生成 Token 对 ===
   const tokens = generateTokenPair({
     tenantId: tenant.id,
     email: tenant.email,
@@ -61,18 +71,18 @@ export async function login(input: LoginInput): Promise<AuthResult> {
     subscriptionStatus: tenant.subscription_status,
     subscriptionPlan: tenant.subscription_plan,
     emailVerified: !!tenant.email_verified_at,
-    sessionId: undefined, // 待接入sessionService
+    sessionId: sessionResult.sessionId, // 用 sessionId 作 jti
   });
 
-  logger.info('User login', { tenantId: tenant.id });
+  logger.info('User login', { tenantId: tenant.id, sessionId: sessionResult.sessionId });
 
   return {
     success: true,
     tenantId: tenant.id,
     accessToken: tokens.accessToken,
     refreshToken: tokens.refreshToken,
-    sessionId: tokens.sessionId,   // 先undefined
-    emailVerified: !!tenant.email_verified_at
+    sessionId: sessionResult.sessionId,
+    emailVerified: !!tenant.email_verified_at,
   };
 }
 

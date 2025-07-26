@@ -2,6 +2,8 @@ export interface LoginInput {
   email: string;
   password: string;
   ip: string;
+  userAgent?: string;
+  deviceType?: string;
 }
 
 export interface AuthResult {
