@@ -6,3 +6,5 @@ export * from './auth_types';
 export * from './tenantService';
 export * from './authService';
 export * from './sessionService';
+export * from './password_types';
+export * from './email_types';

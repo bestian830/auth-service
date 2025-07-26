@@ -6,3 +6,5 @@ export * from './JWT_CONSTANTS';
 export * from './TENANTSERVICE';
 export * from './AUTHSERVICE';
 export * from './SESSION';
+export * from './PASSWORD';
+export * from './EMAIL';

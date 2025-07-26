@@ -6,3 +6,4 @@ export * from './redis-helper';
 export * from './token-blacklist';
 export * from './password';
 export * from './loginLock';
+export * from './email-template-renderer';
