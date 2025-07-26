@@ -8,3 +8,4 @@ export * from './authService';
 export * from './sessionService';
 export * from './password_types';
 export * from './email_types';
+export * from './subscription_types';

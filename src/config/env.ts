@@ -106,4 +106,7 @@ export const env: EnvConfig = {
   maxLoginAttempts: getNumber('MAX_LOGIN_ATTEMPTS', 5),
   lockoutDuration: getNumber('LOCKOUT_DURATION', 180000), // 30分钟
   requireEmailVerification: getBoolean('REQUIRE_EMAIL_VERIFICATION', true),
+
+  // 订阅服务配置
+  subscriptionServiceBaseUrl: required('SUBSCRIPTION_SERVICE_BASE_URL'),
 };

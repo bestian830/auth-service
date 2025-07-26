@@ -44,4 +44,6 @@ export interface EnvConfig {
   maxLoginAttempts: number;
   lockoutDuration: number;
   requireEmailVerification: boolean;
+
+  subscriptionServiceBaseUrl: string;
 }
