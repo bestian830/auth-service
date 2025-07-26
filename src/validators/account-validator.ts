@@ -1,51 +1,20 @@
-/**
- * Account Validator - 账号相关数据校验
- * 职责：校验邮箱、注册、登录等账号相关输入格式
- */
+// validators/account-validator.ts
 
 import Joi from 'joi';
-import { RegisterData, LoginCredentials } from '../types/auth';
-import { SimpleValidationResult, SimpleMultiFieldValidationResult } from '../types/validation';
-
-/**
- * 校验邮箱格式
- * @param email 邮箱地址
- * @returns 校验结果
- */
-export function validateEmail(email: string): SimpleValidationResult {
-  const schema = Joi.string()
-    .email({ tlds: { allow: false } })
-    .max(100)
-    .required();
-
-  const { error } = schema.validate(email);
-  
-  if (error) {
-    return {
-      isValid: false,
-      errors: [{ 
-        field: 'email', 
-        message: 'Email format is incorrect or exceeds 100 characters'
-      }]
-    };
-  }
-
-  return { isValid: true, errors: [] };
-}
+import { validatePhoneNumber } from '../utils';
+import { RegisterTenantInput, LoginInput, ValidationError, ValidationResult } from '../types';
 
 /**
  * 校验注册数据
- * @param data 注册数据
- * @returns 校验结果
  */
-export function validateRegistrationData(data: RegisterData): SimpleMultiFieldValidationResult {
+export function validateRegistrationData(data: RegisterTenantInput): ValidationResult {
   const schema = Joi.object({
     email: Joi.string()
       .email({ tlds: { allow: false } })
       .max(100)
       .required()
       .messages({
-        'string.email': 'Email format is incorrect',
+        'string.email': 'Email format error',
         'string.max': 'Email length cannot exceed 100 characters',
         'any.required': 'Email is required'
       }),
@@ -57,13 +26,6 @@ export function validateRegistrationData(data: RegisterData): SimpleMultiFieldVa
         'string.min': 'Password must be at least 8 characters',
         'string.max': 'Password cannot exceed 64 characters',
         'any.required': 'Password is required'
-      }),
-    confirmPassword: Joi.string()
-      .valid(Joi.ref('password'))
-      .required()
-      .messages({
-        'any.only': 'Passwords do not match',
-        'any.required': 'Confirm password is required'
       }),
     storeName: Joi.string()
       .min(1)
@@ -87,33 +49,35 @@ export function validateRegistrationData(data: RegisterData): SimpleMultiFieldVa
       }),
     phone: Joi.string()
       .allow('')
-      .optional()
+      .max(32)
+      .custom((value, helpers) => {
+        if (!value) return value; // 允许空
+        if (!validatePhoneNumber(value, 'CA')) {
+          return helpers.error('any.invalid');
+        }
+        return value;
+      }, 'Phone number validation')
       .messages({
-        'string.base': 'Phone number format is incorrect'
+        'any.invalid': 'Phone number format error, please enter international format, such as +86137xxxx, +1604xxx or local number',
+        'string.max': 'Phone number cannot exceed 32 characters'
       }),
     address: Joi.string()
       .allow('')
+      .max(255)
       .optional()
       .messages({
-        'string.base': 'Address format is incorrect'
+        'string.base': 'Address format error',
+        'string.max': 'Address cannot exceed 255 characters'
       }),
-    acceptTerms: Joi.boolean()
-      .valid(true)
-      .required()
-      .messages({
-        'any.only': 'Must agree to terms',
-        'any.required': 'Must agree to terms'
-      })
   });
 
   const { error } = schema.validate(data, { abortEarly: false });
-  
+
   if (error) {
-    const errors = error.details.map(detail => ({
+    const errors: ValidationError[] = error.details.map(detail => ({
       field: detail.path.join('.'),
       message: detail.message
     }));
-    
     return { isValid: false, errors };
   }
 
@@ -122,17 +86,15 @@ export function validateRegistrationData(data: RegisterData): SimpleMultiFieldVa
 
 /**
  * 校验登录数据
- * @param data 登录数据
- * @returns 校验结果
  */
-export function validateLoginData(data: LoginCredentials): SimpleMultiFieldValidationResult {
+export function validateLoginData(data: LoginInput): ValidationResult {
   const schema = Joi.object({
     email: Joi.string()
       .email({ tlds: { allow: false } })
       .max(100)
       .required()
       .messages({
-        'string.email': 'Email format is incorrect',
+        'string.email': 'Email format error',
         'string.max': 'Email length cannot exceed 100 characters',
         'any.required': 'Email is required'
       }),
@@ -144,23 +106,17 @@ export function validateLoginData(data: LoginCredentials): SimpleMultiFieldValid
         'string.empty': 'Password cannot be empty',
         'any.required': 'Password is required'
       }),
-    rememberMe: Joi.boolean()
-      .optional()
-      .messages({
-        'boolean.base': 'Remember me option format is incorrect'
-      })
   });
 
   const { error } = schema.validate(data, { abortEarly: false });
-  
+
   if (error) {
-    const errors = error.details.map(detail => ({
+    const errors: ValidationError[] = error.details.map(detail => ({
       field: detail.path.join('.'),
       message: detail.message
     }));
-    
     return { isValid: false, errors };
   }
 
   return { isValid: true };
-} 
+}

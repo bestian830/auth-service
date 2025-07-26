@@ -6,5 +6,3 @@
 // 导出所有验证器
 export * from './account-validator';
 export * from './password-validator';
-export * from './session-validator';
-export * from './tenant-validator'; 

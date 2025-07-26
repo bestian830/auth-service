@@ -9,3 +9,4 @@ export * from './sessionService';
 export * from './password_types';
 export * from './email_types';
 export * from './subscription_types';
+export * from './validator_types';
