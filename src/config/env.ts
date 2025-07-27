@@ -91,6 +91,7 @@ export const env: EnvConfig = {
   // 速率限制配置
   rateLimitWindowMs: getNumber('RATE_LIMIT_WINDOW_MS', 900000), // 15分钟
   rateLimitMax: getNumber('RATE_LIMIT_MAX', 100),
+  rateLimitSkipSuccessfulRequests: getBoolean('RATE_LIMIT_SKIP_SUCCESSFUL_REQUESTS', false),
   loginAttempts: getNumber('LOGIN_RATE_LIMIT_MAX', 5),
   registrationAttempts: getNumber('REGISTER_RATE_LIMIT_MAX', 3),
 
@@ -109,4 +110,7 @@ export const env: EnvConfig = {
 
   // 订阅服务配置
   subscriptionServiceBaseUrl: required('SUBSCRIPTION_SERVICE_BASE_URL'),
+
+  corsMethods: getArray('CORS_METHODS', ['GET','POST','PUT','DELETE','OPTIONS']),
+  corsAllowedHeaders: getArray('CORS_ALLOWED_HEADERS', ['Content-Type','Authorization']),
 };

@@ -33,6 +33,7 @@ export interface EnvConfig {
 
   rateLimitWindowMs: number;
   rateLimitMax: number;
+  rateLimitSkipSuccessfulRequests: boolean;
   loginAttempts: number;
   registrationAttempts: number;
 
@@ -40,6 +41,8 @@ export interface EnvConfig {
   logFilePath: string;
 
   corsOrigin: string[];
+  corsMethods: string[];
+  corsAllowedHeaders: string[];
   sessionTimeout: number;
   maxLoginAttempts: number;
   lockoutDuration: number;

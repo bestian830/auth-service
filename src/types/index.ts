@@ -1,3 +1,6 @@
+// 导入 Express 类型扩展
+import './express';
+
 export * from './env_types';
 export * from './database_types';
 export * from './logger_types';
