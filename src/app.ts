@@ -3,14 +3,14 @@
 import express from 'express';
 import compression from 'compression';
 import morgan from 'morgan';
-import { corsMiddleware, helmetMiddleware, globalLimiter, errorHandler } from './src/middleware';
-import authRoutes from './src/routes/authRoutes';
-import emailRoutes from './src/routes/emailRoutes';
-import sessionRoutes from './src/routes/sessionRoutes';
-import tenantRoutes from './src/routes/tenantRoutes';
-import { env } from './src/config/env';
-import { initializeErrorCapture, logger } from './src/utils';
-import { initRedis, closeRedis, initDatabase, closeDatabase, testConnection } from './src/config';
+import { corsMiddleware, helmetMiddleware, globalLimiter, errorHandler } from './middleware';
+import authRoutes from './routes/authRoutes';
+import emailRoutes from './routes/emailRoutes';
+import sessionRoutes from './routes/sessionRoutes';
+import tenantRoutes from './routes/tenantRoutes';
+import { env } from './config/env';
+import { initializeErrorCapture, logger } from './utils';
+import { initRedis, closeRedis, initDatabase, closeDatabase, testConnection } from './config';
 
 const app = express();
 const PORT = env.port || 3002;
