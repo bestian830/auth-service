@@ -66,9 +66,12 @@ export const env: EnvConfig = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '15m',
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
 
-  // SendGrid 邮件配置
-  sendgridApiKey: required('SENDGRID_API_KEY'),
-  emailSenderAddress: required('EMAIL_SENDER_ADDRESS'),
+  // SMTP 邮件配置
+  smtpHost: required('SMTP_HOST'),
+  smtpPort: getNumber('SMTP_PORT', 587),
+  smtpSecure: getBoolean('SMTP_SECURE', false),
+  smtpUser: required('SMTP_USER'),
+  smtpPass: required('SMTP_PASS'),
 
   // 邮件模板配置
   email: {
