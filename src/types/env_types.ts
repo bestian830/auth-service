@@ -15,13 +15,19 @@ export interface EnvConfig {
   databaseUrl: string;
   redisUrl: string;
 
+  // JWT 配置
   jwtSecret: string;
   jwtRefreshSecret: string;
   jwtExpiresIn: string;
   jwtRefreshExpiresIn: string;
 
-  sendgridApiKey: string;
-  emailSenderAddress: string;
+  // SMTP 邮件配置
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpPass: string;
+
   email: EmailConfig;
 
   bcryptRounds: number;
