@@ -9,7 +9,7 @@
  * 4. invalidateAllSessionsForUser - Invalidate all sessions for user
  * 5. refreshSession - Refresh session
  */
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../generated/prisma';
 import { v4 as uuidv4 } from 'uuid';
 import { SESSION_ERRORS, SESSION_CONFIG } from '../constants';
 import type {

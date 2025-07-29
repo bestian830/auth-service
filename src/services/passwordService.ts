@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../generated/prisma';
 import { hashPassword, comparePassword, validatePasswordStrength, revokeAllUserTokens, logger } from '../utils';
 import { PASSWORD_ERRORS } from '../constants';
 import { sendResetPasswordEmail } from './emailService';

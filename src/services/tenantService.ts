@@ -8,7 +8,7 @@ import {
   TenantField
 } from '../types';
 import { logger } from '../utils';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../generated/prisma';
 const prisma = new PrismaClient();
 
 /**
@@ -86,7 +86,7 @@ export async function updateTenantInfo(input: UpdateTenantInput): Promise<Tenant
   const orConditions = [
     input.email ? { email: input.email } : undefined,
     input.subdomain ? { subdomain: input.subdomain } : undefined,
-  ].filter(Boolean);
+  ].filter(Boolean) as any[];
 
   if (orConditions.length > 0) {
     const conflict = await prisma.tenant.findFirst({

@@ -1,6 +1,6 @@
 // services/authService.ts
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../generated/prisma';
 import { LoginInput, AuthResult, LogoutInput, RefreshInput } from '../types';
 import { AUTH_ERRORS } from '../constants';
 import { comparePassword, logger, checkLoginLock, recordLoginFail, clearLoginFail } from '../utils';

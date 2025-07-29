@@ -6,8 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node index.ts",
-    "dev:watch": "ts-node-dev --respawn --transpile-only index.ts",
+    "dev": "ts-node src/app.ts",
+    "dev:watch": "ts-node-dev --respawn --transpile-only src/app.ts",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "prisma:generate": "prisma generate --schema=./prisma/schema.prisma",

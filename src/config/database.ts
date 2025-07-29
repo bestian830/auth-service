@@ -1,5 +1,5 @@
 // auth-service/src/config/database.ts
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../generated/prisma';
 import { logger, delay } from '../utils';
 import { env } from './env';
 import { DATABASE_CONFIG } from '../constants';
@@ -108,9 +108,9 @@ export const testConnection = async (): Promise<boolean> => {
  */
 export const getConnectionStatus = async (): Promise<DatabaseConnectionStatus> => {
   try {
-    const result = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>`
-      SELECT count(*) as count FROM pg_stat_activity WHERE datname = current_database()
-    `;
+    const result = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(
+      `SELECT count(*) as count FROM pg_stat_activity WHERE datname = current_database()`
+    );
     const connectionCount = Number(result[0]?.count || 0);
     return {
       connected: true,
