@@ -7,6 +7,7 @@ import { comparePassword, logger, checkLoginLock, recordLoginFail, clearLoginFai
 import { generateTokenPair, revokeToken, refreshAccessToken, verifyToken } from '../config';
 import { createSession } from './sessionService';
 import { getSubscriptionInfo } from './subscriptionService';
+import { env } from '../config/env';
 
 // 初始化 Prisma
 const prisma = new PrismaClient();
@@ -39,8 +40,8 @@ export async function login(input: LoginInput): Promise<AuthResult> {
     return { success: false, error: AUTH_ERRORS.INVALID_CREDENTIALS };
   }
 
-  // 检查邮箱是否已验证
-  if (!tenant.email_verified_at) {
+  // 检查邮箱是否已验证（仅在配置要求时检查）
+  if (env.requireEmailVerification && !tenant.email_verified_at) {
     await recordLoginFail(input.email, input.ip);
     return { success: false, error: AUTH_ERRORS.EMAIL_NOT_VERIFIED };
   }
