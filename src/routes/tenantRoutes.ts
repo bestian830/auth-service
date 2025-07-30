@@ -2,30 +2,18 @@
 
 import { Router } from 'express';
 import {
-  registerTenantController,
   updateTenantInfoController,
   changeTenantPasswordController,
   checkUniqueFieldsController,
   getTenantByIdController,
   getTenantByEmailController,
   softDeleteTenantController,
-  verifyEmailController,
-} from '../controllers/tenantController';
+  verifyEmailController
+} from '../controllers';
 
 import { cleanRequestData, cleanQueryParams, extractTenant, registerLimiter, globalLimiter } from '../middleware';
 
 const router = Router();
-
-/**
- * 注册新租户
- * POST /api/v1/tenant
- */
-router.post(
-  '/',
-  cleanRequestData,
-  registerLimiter,
-  registerTenantController
-);
 
 /**
  * 更新租户信息（需认证）
@@ -98,7 +86,8 @@ router.delete(
  */
 router.post(
   '/:tenantId/verify-email',
-  extractTenant,
+  cleanRequestData,
+  globalLimiter,
   verifyEmailController
 );
 

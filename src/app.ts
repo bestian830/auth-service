@@ -5,7 +5,6 @@ import compression from 'compression';
 import morgan from 'morgan';
 import { corsMiddleware, helmetMiddleware, globalLimiter, errorHandler } from './middleware';
 import authRoutes from './routes/authRoutes';
-import emailRoutes from './routes/emailRoutes';
 import sessionRoutes from './routes/sessionRoutes';
 import tenantRoutes from './routes/tenantRoutes';
 import { env } from './config/env';
@@ -35,7 +34,6 @@ async function bootstrap() {
 
     // 路由注册
     app.use('/api/v1/auth', authRoutes);
-    app.use('/api/v1/email', emailRoutes);
     app.use('/api/v1/session', sessionRoutes);
     app.use('/api/v1/tenant', tenantRoutes);
 

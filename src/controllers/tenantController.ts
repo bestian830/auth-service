@@ -1,31 +1,16 @@
 // controllers/tenantController.ts
 
 import { Request, Response } from 'express';
-import {
-  registerTenant,
-  updateTenantInfo,
-  changeTenantPassword,
-  checkUniqueFields,
-  getTenantById,
-  getTenantByEmail,
-  softDeleteTenant,
+import { 
+  updateTenantInfo, 
+  changeTenantPassword, 
+  checkUniqueFields, 
+  getTenantById, 
+  getTenantByEmail, 
+  softDeleteTenant, 
   verifyEmail,
 } from '../services';
 import { logger } from '../utils';
-
-/**
- * 注册租户
- */
-export async function registerTenantController(req: Request, res: Response) {
-  try {
-    const input = req.body;
-    const result = await registerTenant(input);
-    return res.json({ success: true, data: result });
-  } catch (error: any) {
-    logger.error('Register tenant failed', { error });
-    return res.status(400).json({ success: false, error: error.message });
-  }
-}
 
 /**
  * 更新租户信息

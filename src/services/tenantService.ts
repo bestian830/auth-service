@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { logger } from '../utils';
 import { PrismaClient } from '../../generated/prisma';
+import { verifyEmailVerificationToken } from '../config';
 const prisma = new PrismaClient();
 
 /**
@@ -186,6 +187,27 @@ export async function verifyEmail(tenantId: string): Promise<void> {
     data: { email_verified_at: new Date() }
   });
   logger.info('Tenant email verified', { tenantId });
+}
+
+/**
+ * 基于 token 的邮箱验证激活
+ */
+export async function verifyEmailWithToken(token: string): Promise<void> {
+  try {
+    // 验证 token 并获取 tenantId
+    const { tenantId } = await verifyEmailVerificationToken(token);
+    
+    // 更新邮箱验证状态
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: { email_verified_at: new Date() }
+    });
+    
+    logger.info('Tenant email verified with token', { tenantId });
+  } catch (error: any) {
+    logger.error('Email verification with token failed', { error: error.message });
+    throw new Error('Invalid or expired verification token');
+  }
 }
 
 /**
