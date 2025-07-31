@@ -41,18 +41,26 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
   });
 
   // 检查是否有未删除的冲突租户
-  const activeConflict = allConflicts.find(t => t.deleted_at === null);
-  if (activeConflict) {
-    if (activeConflict.email === cleanedInput.email) {
+  const activeConflicts = allConflicts.filter(t => t.deleted_at === null);
+  if (activeConflicts.length > 0) {
+    // 优先检查邮箱冲突（邮箱优先级更高）
+    const emailConflict = activeConflicts.find(t => t.email === cleanedInput.email);
+    if (emailConflict) {
       throw new Error(TENANT_ERRORS.EMAIL_EXISTS);
     }
-    if (activeConflict.subdomain === cleanedInput.subdomain) {
+    
+    // 再检查子域名冲突
+    const subdomainConflict = activeConflicts.find(t => t.subdomain === cleanedInput.subdomain);
+    if (subdomainConflict) {
       throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
     }
   }
 
   // 查找软删除的账号（用于恢复）
-  const deletedTenant = allConflicts.find(t => t.deleted_at !== null);
+  // 优先选择邮箱匹配的软删除账号，如果没有则选择子域名匹配的
+  const deletedTenants = allConflicts.filter(t => t.deleted_at !== null);
+  const deletedTenant = deletedTenants.find(t => t.email === cleanedInput.email) || 
+                       deletedTenants.find(t => t.subdomain === cleanedInput.subdomain);
 
   const passwordHash = await hashPassword(cleanedInput.password);
 
