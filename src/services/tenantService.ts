@@ -101,9 +101,9 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
     logger.info('Tenant registered', { tenantId: tenant.id });
   }
 
-  // 生成邮箱验证码和过期时间（30分钟）
+  // 生成邮箱验证码和过期时间（10分钟）
   const verificationCode = generateVerificationCode();
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   
   await prisma.tenant.update({
     where: { id: tenant.id },
