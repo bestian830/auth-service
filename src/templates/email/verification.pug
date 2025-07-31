@@ -13,20 +13,33 @@ html
         border: 1px solid #e0e0e0;
         font-family: Arial, sans-serif;
       }
-      .button {
+      .verification-code {
         display: inline-block;
-        padding: 10px 20px;
-        background-color: #1a73e8;
-        color: #ffffff !important;
-        text-decoration: none;
-        border-radius: 4px;
+        padding: 15px 25px;
+        background-color: #f8f9fa;
+        border: 2px solid #1a73e8;
+        border-radius: 8px;
+        font-size: 24px;
+        font-weight: bold;
+        color: #1a73e8;
+        text-align: center;
+        letter-spacing: 3px;
+        margin: 20px 0;
+      }
+      .note {
+        color: #666;
+        font-size: 14px;
+        margin-top: 20px;
       }
   body
     .container
       h2 Welcome to Tymoe!
-      p Please click the button below to verify your email address:
-      a.button(href=url) Verify Email
+      p Please use the verification code below to verify your email address:
+      .verification-code= code
+      p This verification code is valid for 30 minutes.
       p If you did not create an account on Tymoe, you can ignore this email.
+      p.note
+        | Please enter this code in the verification page to complete your registration.
       p
         | Regards,
         br

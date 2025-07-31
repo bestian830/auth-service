@@ -1,4 +1,4 @@
-import { hashPassword, comparePassword } from '../utils';
+import { hashPassword, comparePassword, generateVerificationCode } from '../utils';
 import { TENANT_UNIQUE_FIELDS, TENANT_ERRORS } from '../constants';
 import {
   RegisterTenantInput,
@@ -9,7 +9,6 @@ import {
 } from '../types';
 import { logger, cleanNullableField } from '../utils';
 import { PrismaClient } from '../../generated/prisma';
-import { verifyEmailVerificationToken } from '../config';
 const prisma = new PrismaClient();
 
 /**
@@ -101,6 +100,19 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
     });
     logger.info('Tenant registered', { tenantId: tenant.id });
   }
+
+  // 生成邮箱验证码和过期时间（30分钟）
+  const verificationCode = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+  
+  await prisma.tenant.update({
+    where: { id: tenant.id },
+    data: {
+      email_verification_code: verificationCode,
+      email_verification_code_expires_at: expiresAt,
+    }
+  });
+
   return mapTenantInfo(tenant);
 }
 
@@ -212,27 +224,6 @@ export async function verifyEmail(tenantId: string): Promise<void> {
     data: { email_verified_at: new Date() }
   });
   logger.info('Tenant email verified', { tenantId });
-}
-
-/**
- * 基于 token 的邮箱验证激活
- */
-export async function verifyEmailWithToken(token: string): Promise<void> {
-  try {
-    // 验证 token 并获取 tenantId
-    const { tenantId } = await verifyEmailVerificationToken(token);
-    
-    // 更新邮箱验证状态
-    await prisma.tenant.update({
-      where: { id: tenantId },
-      data: { email_verified_at: new Date() }
-    });
-    
-    logger.info('Tenant email verified with token', { tenantId });
-  } catch (error: any) {
-    logger.error('Email verification with token failed', { error: error.message });
-    throw new Error('Invalid or expired verification token');
-  }
 }
 
 /**

@@ -1,18 +1,30 @@
 import { sendEmail } from '../config';
 import { EMAIL_SUBJECTS } from '../constants';
-import { renderEmailTemplate, buildVerificationUrl, buildResetPasswordUrl } from '../utils';
-import { generateEmailVerificationToken, generatePasswordResetToken } from '../config';
+import { renderEmailTemplate, buildResetPasswordUrl } from '../utils';
+import { generatePasswordResetToken } from '../config';
+import { PrismaClient } from '../../generated/prisma';
+
+const prisma = new PrismaClient();
 
 /**
  * 发送邮箱验证邮件
  */
 export async function sendVerificationEmail(email: string, tenantId: string) {
-  // 1. 生成token和url
-  const token = generateEmailVerificationToken(email, tenantId);
-  const url = buildVerificationUrl(token, email);
+  // 1. 从数据库获取验证码
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { email_verification_code: true }
+  });
+
+  if (!tenant || !tenant.email_verification_code) {
+    throw new Error('Verification code not found');
+  }
 
   // 2. 渲染模板
-  const html = renderEmailTemplate('verify-email', { email, token, url });
+  const html = renderEmailTemplate('verify-email', { 
+    email, 
+    code: tenant.email_verification_code 
+  });
   const subject = EMAIL_SUBJECTS.VERIFY_EMAIL;
 
   // 3. 发送邮件

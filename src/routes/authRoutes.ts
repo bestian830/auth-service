@@ -10,6 +10,7 @@ import {
   initiateResetPasswordController,
   resetPasswordController,
   resendVerificationEmailController,
+  verifyEmailCodeController,
 } from '../controllers';
 import {
   cleanRequestData,
@@ -105,6 +106,16 @@ router.post(
   '/resend-verification',
   cleanRequestData,
   resendVerificationEmailController
+);
+
+/**
+ * 验证邮箱验证码
+ * POST /api/v1/auth/verify-email
+ */
+router.post(
+  '/verify-email',
+  cleanRequestData,
+  verifyEmailCodeController
 );
 
 export default router;
