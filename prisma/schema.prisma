@@ -14,8 +14,8 @@ model Tenant {
   id                        String               @id @default(uuid())
   email                     String               @unique
   phone                     String?              @unique
-  store_name                String
-  subdomain                 String               @unique
+  store_name                String?
+  subdomain                 String?              @unique
   password_hash             String
   address                   String?
   email_verified_at         DateTime?
