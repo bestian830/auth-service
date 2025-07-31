@@ -2,8 +2,8 @@ export interface RegisterTenantInput {
     email: string;
     password: string;
     phone?: string;
-    storeName: string;
-    subdomain: string;
+    storeName?: string;
+    subdomain?: string;
     address?: string;
 }
 
