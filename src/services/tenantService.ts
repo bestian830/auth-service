@@ -24,31 +24,35 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
     address: cleanNullableField(input.address),
   }
 
-  // 查未删除的唯一性
-  const conflict = await prisma.tenant.findFirst({
+  // 一次性查询所有冲突的租户（包括已删除和未删除的）
+  const allConflicts = await prisma.tenant.findMany({
     where: {
       OR: [
         { email: cleanedInput.email },
         { subdomain: cleanedInput.subdomain }
-      ],
-      deleted_at: null
+      ]
+    },
+    select: {
+      id: true,
+      email: true,
+      subdomain: true,
+      deleted_at: true
     }
   });
-  if (conflict) {
-    if (conflict.email === cleanedInput.email) throw new Error(TENANT_ERRORS.EMAIL_EXISTS);
-    if (conflict.subdomain === cleanedInput.subdomain) throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
+
+  // 检查是否有未删除的冲突租户
+  const activeConflict = allConflicts.find(t => t.deleted_at === null);
+  if (activeConflict) {
+    if (activeConflict.email === cleanedInput.email) {
+      throw new Error(TENANT_ERRORS.EMAIL_EXISTS);
+    }
+    if (activeConflict.subdomain === cleanedInput.subdomain) {
+      throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
+    }
   }
 
-  // 查软删除的账号
-  const deletedTenant = await prisma.tenant.findFirst({
-    where: {
-      OR: [
-        { email: cleanedInput.email },
-        { subdomain: cleanedInput.subdomain }
-      ],
-      deleted_at: { not: null }
-    }
-  });
+  // 查找软删除的账号（用于恢复）
+  const deletedTenant = allConflicts.find(t => t.deleted_at !== null);
 
   const passwordHash = await hashPassword(cleanedInput.password);
 
