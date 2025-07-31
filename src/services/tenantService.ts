@@ -24,13 +24,16 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
     address: cleanNullableField(input.address),
   }
 
+  // 构造 OR 查询条件数组
+  const orConditions: any[] = [{ email: cleanedInput.email }];
+  if (cleanedInput.subdomain) {
+    orConditions.push({ subdomain: cleanedInput.subdomain });
+  }
+
   // 一次性查询所有冲突的租户（包括已删除和未删除的）
   const allConflicts = await prisma.tenant.findMany({
     where: {
-      OR: [
-        { email: cleanedInput.email },
-        { subdomain: cleanedInput.subdomain }
-      ]
+      OR: orConditions
     },
     select: {
       id: true,
@@ -49,10 +52,12 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
       throw new Error(TENANT_ERRORS.EMAIL_EXISTS);
     }
     
-    // 再检查子域名冲突
-    const subdomainConflict = activeConflicts.find(t => t.subdomain === cleanedInput.subdomain);
-    if (subdomainConflict) {
-      throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
+    // 检查子域名冲突（仅有填写时检查）
+    if (cleanedInput.subdomain) {
+      const subdomainConflict = activeConflicts.find(t => t.subdomain === cleanedInput.subdomain);
+      if (subdomainConflict) {
+        throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
+      }
     }
   }
 
@@ -60,7 +65,7 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
   // 优先选择邮箱匹配的软删除账号，如果没有则选择子域名匹配的
   const deletedTenants = allConflicts.filter(t => t.deleted_at !== null);
   const deletedTenant = deletedTenants.find(t => t.email === cleanedInput.email) || 
-                       deletedTenants.find(t => t.subdomain === cleanedInput.subdomain);
+                       (cleanedInput.subdomain ? deletedTenants.find(t => t.subdomain === cleanedInput.subdomain) : null);
 
   const passwordHash = await hashPassword(cleanedInput.password);
 
