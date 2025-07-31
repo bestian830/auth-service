@@ -1,8 +1,8 @@
 export interface AuthJwtPayload {
   tenantId: string;
   email?: string;
-  storeName?: string;
-  subdomain?: string;
+  storeName?: string | null;
+  subdomain?: string | null;
   subscriptionStatus?: 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'UNSUBSCRIBE' | 'TRIAL';
   subscriptionPlan?: 'BASIC' | 'STANDARD' | 'PRO' | 'PREMIUM';
   emailVerified?: boolean;
@@ -18,8 +18,8 @@ export interface AuthJwtPayload {
 export interface TokenGenerationParams {
   tenantId: string;
   email?: string;
-  storeName?: string;
-  subdomain?: string;
+  storeName?: string | null;
+  subdomain?: string | null;
   subscriptionStatus?: string;
   subscriptionPlan?: string;
   emailVerified?: boolean;

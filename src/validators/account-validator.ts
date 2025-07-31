@@ -28,20 +28,20 @@ export function validateRegistrationData(data: RegisterTenantInput): ValidationR
         'any.required': 'Password is required'
       }),
     storeName: Joi.string()
+      .allow('')
       .min(1)
       .max(100)
       .optional()
       .messages({
-        'string.min': 'Store name cannot be empty',
         'string.max': 'Store name cannot exceed 100 characters',
       }),
     subdomain: Joi.string()
+      .allow('')
       .min(2)
       .max(50)
       .pattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
       .optional()
       .messages({
-        'string.min': 'Subdomain must be at least 2 characters',
         'string.max': 'Subdomain cannot exceed 50 characters',
         'string.pattern.base': 'Subdomain can only contain lowercase letters, numbers, and hyphens, and cannot start or end with a hyphen',
       }),

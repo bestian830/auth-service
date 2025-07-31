@@ -26,8 +26,8 @@ export interface TenantInfo {
     id: string;
     email: string;
     phone?: string;
-    storeName: string;
-    subdomain: string;
+    storeName?: string;
+    subdomain?: string;
     address?: string;
     emailVerified: boolean;
     createdAt: Date;

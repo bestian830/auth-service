@@ -3,7 +3,7 @@
 import { PrismaClient } from '../../generated/prisma';
 import { LoginInput, AuthResult, LogoutInput, RefreshInput } from '../types';
 import { AUTH_ERRORS } from '../constants';
-import { comparePassword, logger, checkLoginLock, recordLoginFail, clearLoginFail } from '../utils';
+import { comparePassword, logger, checkLoginLock, recordLoginFail, clearLoginFail, cleanNullableField } from '../utils';
 import { generateTokenPair, revokeToken, refreshAccessToken, verifyToken } from '../config';
 import { createSession } from './sessionService';
 import { getSubscriptionInfo } from './subscriptionService';
@@ -70,8 +70,8 @@ export async function login(input: LoginInput): Promise<AuthResult> {
   const tokens = generateTokenPair({
     tenantId: tenant.id,
     email: tenant.email,
-    storeName: tenant.store_name,
-    subdomain: tenant.subdomain,
+    storeName: cleanNullableField(tenant.store_name),
+    subdomain: cleanNullableField(tenant.subdomain),
     subscriptionStatus: sub.status,
     subscriptionPlan: sub.plan,
     emailVerified: !!tenant.email_verified_at,

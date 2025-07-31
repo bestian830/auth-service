@@ -7,7 +7,7 @@ import {
   TenantInfo,
   TenantField
 } from '../types';
-import { logger } from '../utils';
+import { logger, cleanNullableField } from '../utils';
 import { PrismaClient } from '../../generated/prisma';
 import { verifyEmailVerificationToken } from '../config';
 const prisma = new PrismaClient();
@@ -16,33 +16,41 @@ const prisma = new PrismaClient();
  * 注册新租户
  */
 export async function registerTenant(input: RegisterTenantInput): Promise<TenantInfo> {
+  const cleanedInput = {
+    ...input,
+    storeName: cleanNullableField(input.storeName),
+    subdomain: cleanNullableField(input.subdomain),
+    phone: cleanNullableField(input.phone),
+    address: cleanNullableField(input.address),
+  }
+
   // 查未删除的唯一性
   const conflict = await prisma.tenant.findFirst({
     where: {
       OR: [
-        { email: input.email },
-        { subdomain: input.subdomain }
+        { email: cleanedInput.email },
+        { subdomain: cleanedInput.subdomain }
       ],
       deleted_at: null
     }
   });
   if (conflict) {
-    if (conflict.email === input.email) throw new Error(TENANT_ERRORS.EMAIL_EXISTS);
-    if (conflict.subdomain === input.subdomain) throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
+    if (conflict.email === cleanedInput.email) throw new Error(TENANT_ERRORS.EMAIL_EXISTS);
+    if (conflict.subdomain === cleanedInput.subdomain) throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
   }
 
   // 查软删除的账号
   const deletedTenant = await prisma.tenant.findFirst({
     where: {
       OR: [
-        { email: input.email },
-        { subdomain: input.subdomain }
+        { email: cleanedInput.email },
+        { subdomain: cleanedInput.subdomain }
       ],
       deleted_at: { not: null }
     }
   });
 
-  const passwordHash = await hashPassword(input.password);
+  const passwordHash = await hashPassword(cleanedInput.password);
 
   let tenant;
   if (deletedTenant) {
@@ -51,10 +59,10 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
       where: { id: deletedTenant.id },
       data: {
         password_hash: passwordHash,
-        store_name: input.storeName,
-        subdomain: input.subdomain,
-        address: input.address,
-        phone: input.phone,
+        store_name: cleanedInput.storeName,
+        subdomain: cleanedInput.subdomain,
+        address: cleanedInput.address,
+        phone: cleanedInput.phone,
         deleted_at: null,
         email_verified_at: null,
         updated_at: new Date()
@@ -65,12 +73,12 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
     // 新建账号
     tenant = await prisma.tenant.create({
       data: {
-        email: input.email,
-        phone: input.phone,
+        email: cleanedInput.email,
+        phone: cleanedInput.phone,
         password_hash: passwordHash,
-        store_name: input.storeName,
-        subdomain: input.subdomain,
-        address: input.address,
+        store_name: cleanedInput.storeName,
+        subdomain: cleanedInput.subdomain,
+        address: cleanedInput.address,
         email_verified_at: null
       }
     });

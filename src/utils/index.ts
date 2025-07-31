@@ -8,3 +8,4 @@ export * from './password';
 export * from './loginLock';
 export * from './email-template-renderer';
 export * from './phone-validator';
+export * from './sanitize';

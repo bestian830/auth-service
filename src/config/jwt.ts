@@ -20,7 +20,7 @@ const generateTokenId = (): string => {
  * 执行逻辑：根据type选择不同的secret和过期时间，附加元数据（iss, aud, jti），生成带签名的token。
  */
 export const generateToken = (
-  payload: Omit<AuthJwtPayload, 'iat' | 'exp' | 'iss' | 'aud' | 'jti'>,
+  payload: Partial<Omit<AuthJwtPayload, 'iat' | 'exp' | 'iss' | 'aud' | 'jti'>>,
   type: AuthJwtPayload['type'] = 'access'
 ): string => {
   let secret = type === 'refresh' ? env.jwtRefreshSecret : env.jwtSecret;
@@ -213,7 +213,11 @@ export const generateEmailVerificationToken = (
   email: string,
   tenantId: string
 ): string => {
-  return generateToken({ email, tenantId, type: 'email_verification' }, 'email_verification');
+  return generateToken({ 
+    email, 
+    tenantId, 
+    type: 'email_verification' 
+  }, 'email_verification');
 };
 
 
@@ -267,7 +271,11 @@ export const generatePasswordResetToken = (
   email: string,
   tenantId: string
 ): string => {
-  return generateToken({ email, tenantId, type: 'password_reset' }, 'password_reset');
+  return generateToken({ 
+    email, 
+    tenantId, 
+    type: 'password_reset' 
+  }, 'password_reset');
 };
 
 /**
