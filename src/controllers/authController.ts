@@ -1,7 +1,6 @@
 // controllers/authController.ts
 
 import { Request, Response } from 'express';
-import { validateRegistrationData, validateLoginData } from '../validators';
 import { registerTenant, 
     login, 
     logout, 
@@ -16,11 +15,6 @@ import { logger } from '../utils/logger';
  * 注册
  */
 export async function register(req: Request, res: Response) {
-  const { isValid, errors } = validateRegistrationData(req.body);
-  if (!isValid) {
-    return res.status(400).json({ success: false, errors });
-  }
-
   try {
     const tenant = await registerTenant(req.body);
     // 注册成功自动发邮箱验证邮件
@@ -36,11 +30,6 @@ export async function register(req: Request, res: Response) {
  * 登录
  */
 export async function loginController(req: Request, res: Response) {
-  const { isValid, errors } = validateLoginData(req.body);
-  if (!isValid) {
-    return res.status(400).json({ success: false, errors });
-  }
-
   try {
     const input = {
       ...req.body,
