@@ -6,9 +6,9 @@ export const TENANT_STATUS = {
 } as const;
 
 export const TENANT_ERRORS = {
-    EMAIL_EXISTS: 'EMAIL_ALREADY_REGISTERED',
-    SUBDOMAIN_EXISTS: 'SUBDOMAIN_ALREADY_REGISTERED',
-    TENANT_NOT_FOUND: 'TENANT_NOT_FOUND',
-    INVALID_PASSWORD: 'INVALID_PASSWORD',
-    NOT_ALLOWED: 'OPERATION_NOT_ALLOWED',
+    EMAIL_EXISTS: 'Email already registered',
+    SUBDOMAIN_EXISTS: 'Subdomain already registered',
+    TENANT_NOT_FOUND: 'Tenant not found',
+    INVALID_PASSWORD: 'Invalid password',
+    NOT_ALLOWED: 'Operation not allowed',
 } as const;
