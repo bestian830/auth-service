@@ -3,14 +3,13 @@
 import { Router } from 'express';
 import {
   updateTenantInfoController,
-  changeTenantPasswordController,
   checkUniqueFieldsController,
   getTenantByIdController,
   getTenantByEmailController,
   softDeleteTenantController
 } from '../controllers';
 
-import { cleanRequestData, cleanQueryParams, extractTenant, registerLimiter, globalLimiter } from '../middleware';
+import { cleanRequestData, cleanQueryParams, extractTenant, globalLimiter } from '../middleware';
 
 const router = Router();
 
@@ -25,16 +24,7 @@ router.put(
   updateTenantInfoController
 );
 
-/**
- * 修改租户密码（需认证）
- * POST /api/v1/tenant/change-password
- */
-router.post(
-  '/change-password',
-  cleanRequestData,
-  extractTenant,
-  changeTenantPasswordController
-);
+
 
 /**
  * 检查租户唯一性
