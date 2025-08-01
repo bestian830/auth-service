@@ -47,7 +47,7 @@ router.get(
   checkUniqueFieldsController
 );
 
-/**
+/**✅
  * 根据ID查找租户（需认证）
  * GET /api/v1/tenant/:tenantId
  */

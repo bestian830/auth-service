@@ -36,7 +36,7 @@ router.post(
   register
 );
 
-/**
+/**✅
  * 登录
  * POST /api/v1/auth/login
  */
@@ -48,7 +48,7 @@ router.post(
   loginController
 );
 
-/**
+/**✅
  * 刷新 Token
  * POST /api/v1/auth/refresh
  */
@@ -58,7 +58,7 @@ router.post(
   refreshTokenController
 );
 
-/**
+/**✅
  * 登出
  * POST /api/v1/auth/logout
  */
@@ -68,7 +68,7 @@ router.post(
   logoutController
 );
 
-/**
+/**✅
  * 登录态下修改密码
  * PUT /api/v1/auth/password
  */
