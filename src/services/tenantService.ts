@@ -130,6 +130,7 @@ export async function updateTenantInfo(input: UpdateTenantInput): Promise<Tenant
     const conflict = await prisma.tenant.findFirst({
       where: {
         id: { not: input.tenantId },
+        deleted_at: null,  // 排除软删除的记录
         OR: orConditions
       }
     });
@@ -188,7 +189,12 @@ export async function changeTenantPassword(input: ChangeTenantPasswordInput): Pr
  */
 export async function checkUniqueFields(field: TenantField, value: string): Promise<boolean> {
   if (!TENANT_UNIQUE_FIELDS.includes(field)) throw new Error('Invalid check field');
-  const exist = await prisma.tenant.findFirst({ where: { [field]: value } });
+  const exist = await prisma.tenant.findFirst({ 
+    where: { 
+      [field]: value,
+      deleted_at: null  // 排除软删除的记录
+    } 
+  });
   return !exist;
 }
 

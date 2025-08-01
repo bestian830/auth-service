@@ -3,14 +3,16 @@ import { env } from '../config';
 import { NextFunction, Request, Response } from 'express';
 
 // 全局速率限制（每个 IP 15分钟最多100次）
-export const globalLimiter = rateLimit({
-  windowMs: env.rateLimitWindowMs || 900000,
-  max: env.rateLimitMax || 100,
-  skipSuccessfulRequests: !!env.rateLimitSkipSuccessfulRequests,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: 'Too many requests, please try again later.' },
-});
+export const globalLimiter = process.env.NODE_ENV === 'production'
+  ? rateLimit({
+      windowMs: env.rateLimitWindowMs || 900000,
+      max: env.rateLimitMax || 100,
+      skipSuccessfulRequests: !!env.rateLimitSkipSuccessfulRequests,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: { success: false, error: 'Too many requests, please try again later.' },
+    })
+  : (req: Request, res: Response, next: NextFunction) => next(); // 开发环境直接跳过
 
 // 登录专用速率限制
 export const loginLimiter = process.env.NODE_ENV === 'production'

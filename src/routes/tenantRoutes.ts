@@ -13,7 +13,7 @@ import { cleanRequestData, cleanQueryParams, extractTenant, globalLimiter } from
 
 const router = Router();
 
-/**
+/**✅
  * 更新租户信息（需认证）
  * PUT /api/v1/tenant/:tenantId
  */
@@ -24,9 +24,7 @@ router.put(
   updateTenantInfoController
 );
 
-
-
-/**
+/**✅
  * 检查租户唯一性
  * GET /api/v1/tenant/check-unique?field=email&value=xx
  */
@@ -48,7 +46,7 @@ router.get(
   getTenantByIdController
 );
 
-/**
+/**✅
  * 根据邮箱查找租户（需认证）
  * GET /api/v1/tenant/by-email
  */
@@ -59,7 +57,7 @@ router.get(
   getTenantByEmailController
 );
 
-/**
+/**✅
  * 软删除租户（需认证）
  * DELETE /api/v1/tenant/:tenantId
  */
