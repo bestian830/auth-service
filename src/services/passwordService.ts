@@ -14,6 +14,11 @@ export async function changePassword(input: ChangePasswordInput): Promise<Passwo
   const tenant = await prisma.tenant.findUnique({ where: { id: input.tenantId } });
   if (!tenant) return { success: false, message: PASSWORD_ERRORS.INVALID };
 
+  // 检查邮箱验证状态
+  if (!tenant.email_verified_at) {
+    return { success: false, message: 'Email not verified yet' };
+  }
+
   const ok = await comparePassword(input.oldPassword, tenant.password_hash);
   if (!ok) return { success: false, message: PASSWORD_ERRORS.INVALID };
 
