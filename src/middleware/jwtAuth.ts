@@ -22,10 +22,6 @@ export const extractTenant = async (req: Request, res: Response, next: NextFunct
     if (!payload.tenantId) {
       return res.status(400).json({ success: false, error: 'Missing tenant information in token' });
     }
-    // 校验订阅状态
-    if (!['ACTIVE', 'TRIAL'].includes(payload.subscriptionStatus || '')) {
-      return res.status(403).json({ success: false, error: 'Subscription inactive, please renew your plan' });
-    }
     if (await isTokenRevoked(payload.jti)) {
       return res.status(401).json({ success: false, error: 'Authentication token has been revoked' });
     }

@@ -6,7 +6,6 @@ import { AUTH_ERRORS } from '../constants';
 import { comparePassword, logger, checkLoginLock, recordLoginFail, clearLoginFail, cleanNullableField } from '../utils';
 import { generateTokenPair, revokeToken, refreshAccessToken, verifyToken } from '../config';
 import { createSession } from './sessionService';
-import { getSubscriptionInfo } from './subscriptionService';
 import { env } from '../config/env';
 
 // 初始化 Prisma
@@ -64,16 +63,12 @@ export async function login(input: LoginInput): Promise<AuthResult> {
     deviceType: input.deviceType, // 可选
   });
 
-  const sub = await getSubscriptionInfo(tenant.id);
-
   // === 2. 用 sessionId 生成 Token 对 ===
   const tokens = generateTokenPair({
     tenantId: tenant.id,
     email: tenant.email,
     storeName: cleanNullableField(tenant.store_name),
     subdomain: cleanNullableField(tenant.subdomain),
-    subscriptionStatus: sub.status,
-    subscriptionPlan: sub.plan,
     emailVerified: !!tenant.email_verified_at,
     sessionId: sessionResult.sessionId, // 用 sessionId 作 jti
   });

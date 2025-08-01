@@ -3,8 +3,6 @@ export interface AuthJwtPayload {
   email?: string;
   storeName?: string | null;
   subdomain?: string | null;
-  subscriptionStatus?: 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'UNSUBSCRIBE' | 'TRIAL';
-  subscriptionPlan?: 'BASIC' | 'STANDARD' | 'PRO' | 'PREMIUM';
   emailVerified?: boolean;
   sessionId?: string;
   type: 'access' | 'refresh' | 'email_verification' | 'password_reset';
@@ -20,8 +18,6 @@ export interface TokenGenerationParams {
   email?: string;
   storeName?: string | null;
   subdomain?: string | null;
-  subscriptionStatus?: string;
-  subscriptionPlan?: string;
   emailVerified?: boolean;
   sessionId?: string;
 }

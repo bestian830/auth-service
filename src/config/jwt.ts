@@ -3,7 +3,6 @@ import { env } from './env';
 import { JWT_CONFIG } from '../constants';
 import { AuthJwtPayload, TokenGenerationParams, TokenRefreshResult } from '../types';
 import { addTokenToBlacklist, isTokenBlacklisted, isUserTokenRevoked } from '../utils';
-import { getSubscriptionInfo } from '../services';
 
 
 //生成唯一Token ID
@@ -107,8 +106,6 @@ export const generateTokenPair = (tenantData: TokenGenerationParams) => {
     email: tenantData.email,
     storeName: tenantData.storeName,
     subdomain: tenantData.subdomain,
-    subscriptionStatus: tenantData.subscriptionStatus as AuthJwtPayload['subscriptionStatus'],
-    subscriptionPlan: tenantData.subscriptionPlan as AuthJwtPayload['subscriptionPlan'],
     emailVerified: tenantData.emailVerified,
     sessionId: tenantData.sessionId
   };
@@ -132,23 +129,12 @@ export const generateTokenPair = (tenantData: TokenGenerationParams) => {
 export const refreshAccessToken = async (refreshToken: string): Promise<TokenRefreshResult> => {
   try {
     const payload = await verifyToken(refreshToken, 'refresh');
-    const sub = await getSubscriptionInfo(payload.tenantId);
-
-    if (!['ACTIVE',' TRIAL'].includes(sub.status)) {
-      return {
-        success: false,
-        error: 'Subscription inactive, please renew your plan',
-        requiresLogin: true
-      };
-    }
 
     const newAccessToken = generateToken({
       tenantId: payload.tenantId,
       email: payload.email,
       storeName: payload.storeName,
       subdomain: payload.subdomain,
-      subscriptionStatus: sub.status as AuthJwtPayload['subscriptionStatus'],
-      subscriptionPlan: sub.plan as AuthJwtPayload['subscriptionPlan'],
       emailVerified: payload.emailVerified,
       sessionId: payload.sessionId,
       type: 'access'
