@@ -7,8 +7,7 @@ import {
   checkUniqueFields, 
   getTenantById, 
   getTenantByEmail, 
-  softDeleteTenant, 
-  verifyEmail,
+  softDeleteTenant,
 } from '../services';
 import { logger } from '../utils';
 
@@ -114,19 +113,4 @@ export async function softDeleteTenantController(req: Request, res: Response) {
   }
 }
 
-/**
- * 邮箱验证激活
- */
-export async function verifyEmailController(req: Request, res: Response) {
-  try {
-    const { tenantId } = req.params;
-    if (!tenantId) {
-      return res.status(400).json({ success: false, error: 'Missing tenantId' });
-    }
-    await verifyEmail(tenantId);
-    return res.json({ success: true });
-  } catch (error: any) {
-    logger.error('Verify email failed', { error });
-    return res.status(400).json({ success: false, error: error.message });
-  }
-}
+

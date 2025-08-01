@@ -7,8 +7,7 @@ import {
   checkUniqueFieldsController,
   getTenantByIdController,
   getTenantByEmailController,
-  softDeleteTenantController,
-  verifyEmailController
+  softDeleteTenantController
 } from '../controllers';
 
 import { cleanRequestData, cleanQueryParams, extractTenant, registerLimiter, globalLimiter } from '../middleware';
@@ -78,17 +77,6 @@ router.delete(
   '/:tenantId',
   extractTenant,
   softDeleteTenantController
-);
-
-/**
- * 邮箱验证激活
- * POST /api/v1/tenant/:tenantId/verify-email
- */
-router.post(
-  '/:tenantId/verify-email',
-  cleanRequestData,
-  globalLimiter,
-  verifyEmailController
 );
 
 export default router;

@@ -215,16 +215,7 @@ export async function softDeleteTenant(tenantId: string): Promise<void> {
   logger.info('Tenant soft deleted', { tenantId });
 }
 
-/**
- * 邮箱验证激活
- */
-export async function verifyEmail(tenantId: string): Promise<void> {
-  await prisma.tenant.update({
-    where: { id: tenantId },
-    data: { email_verified_at: new Date() }
-  });
-  logger.info('Tenant email verified', { tenantId });
-}
+
 
 /**
  * tenant -> TenantInfo 映射
