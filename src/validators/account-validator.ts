@@ -104,6 +104,15 @@ export function validateLoginData(data: LoginInput): ValidationResult {
         'string.empty': 'Password cannot be empty',
         'any.required': 'Password is required'
       }),
+    ip: Joi.string()
+      .optional()
+      .messages({
+        'string.base': 'IP address must be a string'
+      }),
+    userAgent: Joi.string()
+      .optional(),
+    deviceType: Joi.string()
+      .optional(),
   });
 
   const { error } = schema.validate(data, { abortEarly: false });

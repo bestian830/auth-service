@@ -34,7 +34,12 @@ export async function getSubscriptionInfo(tenantId: string): Promise<Subscriptio
     return data;
   } catch (error) {
     logger.error('Failed to fetch subscription from service', { tenantId, error });
-    // 降级：没有缓存也没拉到数据，直接抛错或者返回一个默认值
-    throw new Error(SUBSCRIPTION_ERRORS.FETCH_FAILED);
+    // 降级：返回默认订阅状态，不影响登录
+    return {
+      tenantId,
+      status: 'UNSUBSCRIBE',
+      plan: 'BASIC',
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30天后
+    };
   }
 }

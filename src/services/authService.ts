@@ -17,7 +17,7 @@ const prisma = new PrismaClient();
  */
 export async function login(input: LoginInput): Promise<AuthResult> {
   // 检查锁定（IP/邮箱）
-  const lock = await checkLoginLock(input.email, input.ip);
+  const lock = await checkLoginLock(input.email, input.ip || 'unknown');
   if (lock.isLocked) {
     return {
       success: false,
@@ -36,31 +36,31 @@ export async function login(input: LoginInput): Promise<AuthResult> {
   });
 
   if (!tenant) {
-    await recordLoginFail(input.email, input.ip);
+    await recordLoginFail(input.email, input.ip || 'unknown');
     return { success: false, error: AUTH_ERRORS.INVALID_CREDENTIALS };
   }
 
   // 检查邮箱是否已验证（仅在配置要求时检查）
   if (env.requireEmailVerification && !tenant.email_verified_at) {
-    await recordLoginFail(input.email, input.ip);
+    await recordLoginFail(input.email, input.ip || 'unknown');
     return { success: false, error: AUTH_ERRORS.EMAIL_NOT_VERIFIED };
   }
 
   const ok = await comparePassword(input.password, tenant.password_hash);
   if (!ok) {
-    await recordLoginFail(input.email, input.ip);
+    await recordLoginFail(input.email, input.ip || 'unknown');
     return { success: false, error: AUTH_ERRORS.INVALID_CREDENTIALS };
   }
 
   // 登录成功，清除计数
-  await clearLoginFail(input.email, input.ip);
+  await clearLoginFail(input.email, input.ip || 'unknown');
 
   // === 1. 生成 Session，获得 sessionId ===
   const sessionResult = await createSession({
     tenantId: tenant.id,
     refreshToken: undefined,      // 先填 undefined，token 对生成后可补写进 session 表（如需保存的话）
     userAgent: input.userAgent,   // 用户请求头传入
-    ip: input.ip,
+    ip: input.ip || 'unknown',
     deviceType: input.deviceType, // 可选
   });
 

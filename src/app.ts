@@ -14,6 +14,9 @@ import { initRedis, closeRedis, initDatabase, closeDatabase, testConnection } fr
 const app = express();
 const PORT = env.port || 3002;
 
+// 信任代理，确保能正确获取真实IP地址
+app.set('trust proxy', true);
+
 // 初始化全局异常捕获
 initializeErrorCapture();
 

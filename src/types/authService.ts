@@ -1,7 +1,7 @@
 export interface LoginInput {
   email: string;
   password: string;
-  ip: string;
+  ip?: string; // 可选，后端会自动获取
   userAgent?: string;
   deviceType?: string;
 }

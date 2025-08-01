@@ -24,7 +24,7 @@ import {
 
 const router = Router();
 
-/**
+/**✅
  * 注册
  * POST /api/v1/auth/register
  */
@@ -99,7 +99,7 @@ router.post(
   resetPasswordController
 );
 
-/**
+/**✅
  * 重发邮箱验证邮件
  * POST /api/v1/auth/resend-verification
  */
@@ -110,7 +110,7 @@ router.post(
   resendVerificationEmailController
 );
 
-/**
+/**✅
  * 验证邮箱验证码
  * POST /api/v1/auth/verify-email
  */
