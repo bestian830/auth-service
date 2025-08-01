@@ -1,7 +1,6 @@
 import { sendEmail } from '../config';
 import { EMAIL_SUBJECTS } from '../constants';
-import { renderEmailTemplate, buildResetPasswordUrl } from '../utils';
-import { generatePasswordResetToken } from '../config';
+import { renderEmailTemplate } from '../utils';
 import { PrismaClient } from '../../generated/prisma';
 
 const prisma = new PrismaClient();
@@ -44,19 +43,6 @@ export async function sendVerificationEmail(email: string, tenantId?: string) {
   const subject = EMAIL_SUBJECTS.VERIFY_EMAIL;
 
   // 3. 发送邮件
-  await sendEmail(email, subject, html);
-}
-
-/**
- * 发送密码重置邮件
- */
-export async function sendResetPasswordEmail(email: string, tenantId: string) {
-  const token = generatePasswordResetToken(email, tenantId);
-  const url = buildResetPasswordUrl(token, email);
-
-  const html = renderEmailTemplate('reset-password', { email, token, url });
-  const subject = EMAIL_SUBJECTS.RESET_PASSWORD;
-
   await sendEmail(email, subject, html);
 }
 

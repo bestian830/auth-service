@@ -77,8 +77,6 @@ export const env: EnvConfig = {
   email: {
     fromName: process.env.EMAIL_FROM_NAME || 'Tymoe',
     baseUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
-    verificationPath: process.env.EMAIL_VERIFICATION_PATH || '/verify-email',
-    resetPasswordPath: process.env.EMAIL_RESET_PASSWORD_PATH || '/reset-password',
     verificationTokenExpiry: process.env.EMAIL_VERIFICATION_TOKEN_EXPIRY || '24h',
     resetTokenExpiry: process.env.EMAIL_RESET_TOKEN_EXPIRY || '1h',
   },

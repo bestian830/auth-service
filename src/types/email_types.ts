@@ -6,7 +6,7 @@ export interface SendEmailParams {
   text?: string;
 }
 
-export type EmailType = 'verify-email' | 'reset-password' | 'notification' | 'custom';
+export type EmailType = 'verify-email' | 'password-reset-code' | 'custom';
 
 export interface EmailTemplateParams {
   email: string;

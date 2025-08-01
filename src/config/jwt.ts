@@ -273,18 +273,45 @@ export const generatePasswordResetToken = (
 export const verifyPasswordResetToken = (
   token: string
 ): Promise<{ email: string, tenantId: string }> => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     jwt.verify(token, env.jwtSecret as jwt.Secret, {
       algorithms: [JWT_CONFIG.ALGORITHM as jwt.Algorithm],
       issuer: JWT_CONFIG.ISSUER,
       audience: JWT_CONFIG.AUDIENCE
-    }, (error: any, decoded: any) => {
+    }, async (error: any, decoded: any) => {
       if (error) return reject(error);
       const payload = decoded as AuthJwtPayload;
       if (payload.type !== 'password_reset') {
         return reject(new Error('Invalid token type'));
       }
+      
+      // 检查黑名单
+      if (payload.jti && await isTokenBlacklisted(payload.jti)) {
+        return reject(new Error('Token has been revoked'));
+      }
+      
       resolve({ email: payload.email!, tenantId: payload.tenantId });
     });
   });
+};
+
+/**
+ * 验证并删除一次性密码重置token
+ * @param token - 待验证的token
+ * @returns {email, tenantId} 解析出的payload，验证成功后token会被删除
+ */
+export const verifyAndDeleteOneTimePasswordResetToken = async (
+  token: string
+): Promise<{ email: string, tenantId: string }> => {
+  const result = await verifyPasswordResetToken(token);
+  
+  // 验证成功后，立即将token加入黑名单，确保一次性使用
+  // 从token中提取jti和过期时间
+  const decoded = jwt.decode(token) as AuthJwtPayload;
+  if (decoded && decoded.jti && decoded.exp) {
+    const expiresAt = new Date(decoded.exp * 1000);
+    await addTokenToBlacklist(decoded.jti, expiresAt, 'password_reset_used');
+  }
+  
+  return result;
 };

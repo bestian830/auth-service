@@ -8,6 +8,7 @@ import {
   refreshTokenController,
   changePasswordController,
   initiateResetPasswordController,
+  verifyResetCodeController,
   resetPasswordController,
   verifyEmailCodeController,
   resendVerificationEmailController,
@@ -17,6 +18,7 @@ import {
   extractTenant,
   loginLimiter,
   registerLimiter,
+  passwordResetLimiter,
   validateRegisterInput,
   validateLoginInput,
   validateEmailStatus
@@ -80,17 +82,28 @@ router.put(
 );
 
 /**
- * 发起密码重置（找回密码入口，发邮件）
+ * 发起密码重置（发送验证码）
  * POST /api/v1/auth/initiate-reset
  */
 router.post(
   '/initiate-reset',
   cleanRequestData,
+  passwordResetLimiter,
   initiateResetPasswordController
 );
 
 /**
- * 重置密码（通过重置链接）
+ * 验证密码重置验证码
+ * POST /api/v1/auth/verify-reset-code
+ */
+router.post(
+  '/verify-reset-code',
+  cleanRequestData,
+  verifyResetCodeController
+);
+
+/**
+ * 重置密码（通过验证码token）
  * POST /api/v1/auth/reset-password
  */
 router.post(

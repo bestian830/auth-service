@@ -38,3 +38,17 @@ export const registerLimiter = process.env.NODE_ENV === 'production'
       },
     })
   : (req: Request, res: Response, next: NextFunction) => next(); // 开发环境直接跳过
+
+// 密码重置专用速率限制
+export const passwordResetLimiter = process.env.NODE_ENV === 'production'
+  ? rateLimit({
+      windowMs: 60 * 60 * 1000, // 1小时
+      max: 10, // 每小时最多10次
+      keyGenerator: (req) => req.body?.email || req.ip,
+      skipSuccessfulRequests: false,
+      message: { 
+        success: false, 
+        error: 'Too many password reset attempts, try later.' 
+      },
+    })
+  : (req: Request, res: Response, next: NextFunction) => next(); // 开发环境直接跳过

@@ -7,6 +7,7 @@ import { registerTenant,
     refresh, 
     changePassword, 
     initiateResetPassword, 
+    verifyResetCode,
     resetPassword, 
     sendVerificationEmail } from '../services';
 import { logger } from '../utils/logger';
@@ -86,17 +87,34 @@ export async function refreshTokenController(req: Request, res: Response) {
  * 发起密码重置
  */
 export async function initiateResetPasswordController(req: Request, res: Response) {
-  // 这里简单校验 email 即可
-  const { email, tenantId } = req.body;
-  if (!email || !tenantId) {
-    return res.status(400).json({ success: false, error: 'Missing email or tenantId' });
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ success: false, error: 'Missing email' });
   }
 
   try {
-    const result = await initiateResetPassword({ email, tenantId });
+    const result = await initiateResetPassword({ email });
     return res.json(result);
   } catch (error: any) {
     logger.error('Initiate reset password failed', { error });
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+/**
+ * 验证密码重置验证码
+ */
+export async function verifyResetCodeController(req: Request, res: Response) {
+  const { email, code } = req.body;
+  if (!email || !code) {
+    return res.status(400).json({ success: false, error: 'Missing email or code' });
+  }
+
+  try {
+    const result = await verifyResetCode({ email, code });
+    return res.json(result);
+  } catch (error: any) {
+    logger.error('Verify reset code failed', { error });
     return res.status(500).json({ success: false, error: error.message });
   }
 }

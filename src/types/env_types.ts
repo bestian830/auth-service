@@ -3,8 +3,6 @@
 export interface EmailConfig {
   fromName: string;
   baseUrl: string;
-  verificationPath: string;
-  resetPasswordPath: string;
   verificationTokenExpiry: string; // e.g., '24h'
   resetTokenExpiry: string;        // e.g., '1h'
 }
