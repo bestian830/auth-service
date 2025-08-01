@@ -13,13 +13,15 @@ export const globalLimiter = rateLimit({
 });
 
 // 登录专用速率限制
-export const loginLimiter = rateLimit({
-  windowMs: env.rateLimitWindowMs || 900000,
-  max: env.loginAttempts || 10,
-  keyGenerator: (req) => req.body?.email || req.ip,
-  skipSuccessfulRequests: true, // 只算失败的
-  message: { success: false, error: 'Too many failed login attempts, try later.' },
-});
+export const loginLimiter = process.env.NODE_ENV === 'production'
+  ? rateLimit({
+      windowMs: env.rateLimitWindowMs || 900000,
+      max: env.loginAttempts || 10,
+      keyGenerator: (req) => req.body?.email || req.ip,
+      skipSuccessfulRequests: true, // 只算失败的
+      message: { success: false, error: 'Too many failed login attempts, try later.' },
+    })
+  : (req: Request, res: Response, next: NextFunction) => next(); // 开发环境直接跳过
 
 // 注册专用速率限制
 export const registerLimiter = process.env.NODE_ENV === 'production'
