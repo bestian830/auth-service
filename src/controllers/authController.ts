@@ -137,21 +137,3 @@ export async function changePasswordController(req: Request, res: Response) {
     return res.status(500).json({ success: false, error: error.message });
   }
 }
-
-/**
- * 重发邮箱验证邮件（可选）
- */
-export async function resendVerificationEmailController(req: Request, res: Response) {
-  const { email, tenantId } = req.body;
-  if (!email || !tenantId) {
-    return res.status(400).json({ success: false, error: 'Missing email or tenantId' });
-  }
-
-  try {
-    await sendVerificationEmail(email, tenantId);
-    return res.json({ success: true });
-  } catch (error: any) {
-    logger.error('Resend verification email failed', { error });
-    return res.status(500).json({ success: false, error: error.message });
-  }
-}

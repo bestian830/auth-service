@@ -9,3 +9,4 @@ export * from './SESSION';
 export * from './PASSWORD';
 export * from './EMAIL';
 export * from './SUBSCRIPTION';
+export * from './EMAIL_VERIFICATION';

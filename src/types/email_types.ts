@@ -21,7 +21,24 @@ export interface VerifyEmailCodeInput {
   code: string;
 }
 
-export interface VerifyEmailCodeResult {
+export interface EmailVerificationResult {
   success: boolean;
   error?: string;
 }
+
+export interface ResendVerificationCodeResult {
+  success: boolean;
+  error?: string;
+  message?: string;
+}
+
+export interface VerificationCodeInfo {
+  code: string;
+  expiresAt: Date;
+  isExpired: boolean;
+}
+
+export interface RedisKeyPatterns {
+  verifyFailCount: (email: string) => string;
+  dailyResendCount: (email: string, date: string) => string;
+} 

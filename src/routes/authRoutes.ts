@@ -9,8 +9,8 @@ import {
   changePasswordController,
   initiateResetPasswordController,
   resetPasswordController,
-  resendVerificationEmailController,
   verifyEmailCodeController,
+  resendVerificationEmailController,
 } from '../controllers';
 import {
   cleanRequestData,
@@ -99,7 +99,7 @@ router.post(
 );
 
 /**
- * 重发邮箱验证邮件（注册后没收到邮件时）
+ * 重发邮箱验证邮件
  * POST /api/v1/auth/resend-verification
  */
 router.post(

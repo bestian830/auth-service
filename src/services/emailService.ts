@@ -9,21 +9,37 @@ const prisma = new PrismaClient();
 /**
  * 发送邮箱验证邮件
  */
-export async function sendVerificationEmail(email: string, tenantId: string) {
-  // 1. 从数据库获取验证码
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { email_verification_code: true }
-  });
+export async function sendVerificationEmail(email: string, tenantId?: string) {
+  let verificationCode: string;
 
-  if (!tenant || !tenant.email_verification_code) {
-    throw new Error('Verification code not found');
+  if (tenantId) {
+    // 从数据库获取验证码（用于注册时）
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { email_verification_code: true }
+    });
+
+    if (!tenant || !tenant.email_verification_code) {
+      throw new Error('Verification code not found');
+    }
+    verificationCode = tenant.email_verification_code;
+  } else {
+    // 从数据库获取验证码（用于重发时）
+    const tenant = await prisma.tenant.findFirst({
+      where: { email },
+      select: { email_verification_code: true }
+    });
+
+    if (!tenant || !tenant.email_verification_code) {
+      throw new Error('Verification code not found');
+    }
+    verificationCode = tenant.email_verification_code;
   }
 
   // 2. 渲染模板
   const html = renderEmailTemplate('verify-email', { 
     email, 
-    code: tenant.email_verification_code 
+    code: verificationCode 
   });
   const subject = EMAIL_SUBJECTS.VERIFY_EMAIL;
 

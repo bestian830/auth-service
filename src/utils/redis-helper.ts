@@ -31,3 +31,39 @@ export async function delCache(key: string): Promise<void> {
   const fullKey = withRedisPrefix(key);
   await redis.del(fullKey);
 }
+
+/**
+ * 递增计数器
+ */
+export async function incrementCounter(key: string, expiresSeconds?: number): Promise<number> {
+  const redis = getRedisClient();
+  const fullKey = withRedisPrefix(key);
+  const result = await redis.incr(fullKey);
+  
+  // 如果是第一次设置，添加过期时间
+  if (result === 1 && expiresSeconds) {
+    await redis.expire(fullKey, expiresSeconds);
+  }
+  
+  return result;
+}
+
+/**
+ * 获取计数器值
+ */
+export async function getCounter(key: string): Promise<number> {
+  const redis = getRedisClient();
+  const fullKey = withRedisPrefix(key);
+  const value = await redis.get(fullKey);
+  return value ? parseInt(value, 10) : 0;
+}
+
+/**
+ * 重置计数器
+ */
+export async function resetCounter(key: string): Promise<void> {
+  const redis = getRedisClient();
+  const fullKey = withRedisPrefix(key);
+  await redis.del(fullKey);
+}
+
