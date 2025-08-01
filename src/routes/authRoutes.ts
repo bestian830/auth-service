@@ -18,7 +18,8 @@ import {
   loginLimiter,
   registerLimiter,
   validateRegisterInput,
-  validateLoginInput
+  validateLoginInput,
+  validateEmailStatus
 } from '../middleware';
 
 const router = Router();
@@ -105,6 +106,7 @@ router.post(
 router.post(
   '/resend-verification',
   cleanRequestData,
+  validateEmailStatus,
   resendVerificationEmailController
 );
 
@@ -115,6 +117,7 @@ router.post(
 router.post(
   '/verify-email',
   cleanRequestData,
+  validateEmailStatus,
   verifyEmailCodeController
 );
 
