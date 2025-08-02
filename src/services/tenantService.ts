@@ -38,26 +38,45 @@ export async function registerTenant(input: RegisterTenantInput): Promise<Tenant
       id: true,
       email: true,
       subdomain: true,
-      deleted_at: true
+      deleted_at: true,
+      email_verified_at: true
     }
   });
 
   // 检查是否有未删除的冲突租户
   const activeConflicts = allConflicts.filter(t => t.deleted_at === null);
-  if (activeConflicts.length > 0) {
-    // 优先检查邮箱冲突（邮箱优先级更高）
-    const emailConflict = activeConflicts.find(t => t.email === cleanedInput.email);
-    if (emailConflict) {
+  
+  // 检查邮箱冲突
+  const emailConflict = activeConflicts.find(t => t.email === cleanedInput.email);
+  let shouldDeleteEmailConflict = false;
+  
+  if (emailConflict) {
+    // 如果邮箱已存在但未验证，允许重新注册覆盖
+    if (!emailConflict.email_verified_at) {
+      logger.info('Overwriting unverified email registration', { 
+        email: cleanedInput.email, 
+        existingTenantId: emailConflict.id 
+      });
+      shouldDeleteEmailConflict = true;
+    } else {
+      // 邮箱已验证，不允许重新注册
       throw new Error(TENANT_ERRORS.EMAIL_EXISTS);
     }
-    
-    // 检查子域名冲突（仅有填写时检查）
-    if (cleanedInput.subdomain) {
-      const subdomainConflict = activeConflicts.find(t => t.subdomain === cleanedInput.subdomain);
-      if (subdomainConflict) {
-        throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
-      }
+  }
+  
+  // 检查子域名冲突（仅有填写时检查）
+  if (cleanedInput.subdomain) {
+    const subdomainConflict = activeConflicts.find(t => t.subdomain === cleanedInput.subdomain);
+    if (subdomainConflict) {
+      throw new Error(TENANT_ERRORS.SUBDOMAIN_EXISTS);
     }
+  }
+  
+  // 删除未验证的邮箱冲突（在子域名检查之后）
+  if (shouldDeleteEmailConflict) {
+    await prisma.tenant.delete({
+      where: { id: emailConflict!.id }
+    });
   }
 
   // 查找软删除的账号（用于恢复）
@@ -189,11 +208,19 @@ export async function changeTenantPassword(input: ChangeTenantPasswordInput): Pr
  */
 export async function checkUniqueFields(field: TenantField, value: string): Promise<boolean> {
   if (!TENANT_UNIQUE_FIELDS.includes(field)) throw new Error('Invalid check field');
+  
+  const whereCondition: any = {
+    [field]: value,
+    deleted_at: null  // 排除软删除的记录
+  };
+  
+  // 对于邮箱字段，只考虑已验证的邮箱
+  if (field === 'email') {
+    whereCondition.email_verified_at = { not: null };
+  }
+  
   const exist = await prisma.tenant.findFirst({ 
-    where: { 
-      [field]: value,
-      deleted_at: null  // 排除软删除的记录
-    } 
+    where: whereCondition
   });
   return !exist;
 }
