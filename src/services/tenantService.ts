@@ -199,13 +199,29 @@ export async function checkUniqueFields(field: TenantField, value: string): Prom
 }
 
 /**
- * 查找租户
+ * 查找租户（带权限验证）
  */
-export async function getTenantById(tenantId: string): Promise<TenantInfo | null> {
-  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+export async function getTenantById(tenantId: string, requestingTenantId?: string): Promise<TenantInfo | null> {
+  // 如果提供了请求者ID，验证权限
+  if (requestingTenantId && requestingTenantId !== tenantId) {
+    throw new Error('Access denied');
+  }
+  
+  const tenant = await prisma.tenant.findUnique({ 
+    where: { 
+      id: tenantId,
+      deleted_at: null  // 排除已删除的租户
+    } 
+  });
   return tenant ? mapTenantInfo(tenant) : null;
 }
-export async function getTenantByEmail(email: string): Promise<TenantInfo | null> {
+
+export async function getTenantByEmail(email: string, requestingEmail?: string): Promise<TenantInfo | null> {
+  // 如果提供了请求者邮箱，验证权限
+  if (requestingEmail && requestingEmail !== email) {
+    throw new Error('Access denied');
+  }
+  
   const tenant = await prisma.tenant.findUnique({ where: { email } });
   return tenant ? mapTenantInfo(tenant) : null;
 }
@@ -214,6 +230,12 @@ export async function getTenantByEmail(email: string): Promise<TenantInfo | null
  * 软删除租户
  */
 export async function softDeleteTenant(tenantId: string): Promise<void> {
+  // 先检查租户是否存在
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  if (!tenant) {
+    throw new Error(TENANT_ERRORS.TENANT_NOT_FOUND);
+  }
+  
   await prisma.tenant.update({
     where: { id: tenantId },
     data: { deleted_at: new Date() }

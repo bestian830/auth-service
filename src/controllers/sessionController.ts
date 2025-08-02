@@ -50,11 +50,12 @@ export async function isSessionActiveController(req: Request, res: Response) {
  */
 export async function invalidateSessionController(req: Request, res: Response) {
   try {
-    const sessionId = req.body.sessionId || req.params.sessionId;
-    const tokenExp = req.body.tokenExp ? new Date(req.body.tokenExp) : new Date();
+    // 从 JWT 中获取 sessionId
+    const sessionId = req.jwtPayload?.sessionId;
     if (!sessionId) {
-      return res.status(400).json({ success: false, error: 'Missing sessionId' });
+      return res.status(400).json({ success: false, error: 'Missing sessionId in token' });
     }
+    const tokenExp = req.body.tokenExp ? new Date(req.body.tokenExp) : new Date();
     const result = await invalidateSession(sessionId, tokenExp);
     return res.json(result);
   } catch (error: any) {
@@ -68,9 +69,10 @@ export async function invalidateSessionController(req: Request, res: Response) {
  */
 export async function invalidateAllSessionsForTenantController(req: Request, res: Response) {
   try {
-    const tenantId = req.body.tenantId || req.params.tenantId;
+    // 从 JWT 中获取 tenantId
+    const tenantId = req.tenantId;
     if (!tenantId) {
-      return res.status(400).json({ success: false, error: 'Missing tenantId' });
+      return res.status(400).json({ success: false, error: 'Missing tenantId in token' });
     }
     const result = await invalidateAllSessionsForTenant(tenantId);
     return res.json(result);

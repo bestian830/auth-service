@@ -9,11 +9,11 @@ import {
   softDeleteTenantController
 } from '../controllers';
 
-import { cleanRequestData, cleanQueryParams, extractTenant, globalLimiter } from '../middleware';
+import { cleanRequestData, cleanQueryParams, extractTenant, globalLimiter, validateTenantUpdate } from '../middleware';
 
 const router = Router();
 
-/**✅
+/**
  * 更新租户信息（需认证）
  * PUT /api/v1/tenant/:tenantId
  */
@@ -21,6 +21,7 @@ router.put(
   '/:tenantId',
   cleanRequestData,
   extractTenant,
+  validateTenantUpdate,  // 新增验证中间件
   updateTenantInfoController
 );
 
@@ -35,7 +36,7 @@ router.get(
   checkUniqueFieldsController
 );
 
-/**✅
+/**
  * 根据ID查找租户（需认证）
  * GET /api/v1/tenant/:tenantId
  */
@@ -46,7 +47,7 @@ router.get(
   getTenantByIdController
 );
 
-/**✅
+/**
  * 根据邮箱查找租户（需认证）
  * GET /api/v1/tenant/by-email
  */
@@ -57,7 +58,7 @@ router.get(
   getTenantByEmailController
 );
 
-/**✅
+/**
  * 软删除租户（需认证）
  * DELETE /api/v1/tenant/:tenantId
  */

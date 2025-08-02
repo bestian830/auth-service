@@ -21,7 +21,10 @@ import {
   passwordResetLimiter,
   validateRegisterInput,
   validateLoginInput,
-  validateEmailStatus
+  validateEmailStatus,
+  validateEmailFormat,
+  validateVerificationCode,
+  validatePasswordStrength
 } from '../middleware';
 
 const router = Router();
@@ -81,7 +84,7 @@ router.put(
   changePasswordController
 );
 
-/**
+/**✅
  * 发起密码重置（发送验证码）
  * POST /api/v1/auth/initiate-reset
  */
@@ -89,26 +92,30 @@ router.post(
   '/initiate-reset',
   cleanRequestData,
   passwordResetLimiter,
+  validateEmailFormat,
   initiateResetPasswordController
 );
 
-/**
+/**✅
  * 验证密码重置验证码
  * POST /api/v1/auth/verify-reset-code
  */
 router.post(
   '/verify-reset-code',
   cleanRequestData,
+  validateEmailFormat,
+  validateVerificationCode,
   verifyResetCodeController
 );
 
-/**
+/**✅
  * 重置密码（通过验证码token）
  * POST /api/v1/auth/reset-password
  */
 router.post(
   '/reset-password',
   cleanRequestData,
+  validatePasswordStrength,
   resetPasswordController
 );
 
@@ -131,6 +138,7 @@ router.post(
   '/verify-email',
   cleanRequestData,
   validateEmailStatus,
+  validateVerificationCode,
   verifyEmailCodeController
 );
 

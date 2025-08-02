@@ -101,7 +101,9 @@ export const env: EnvConfig = {
   logFilePath: process.env.LOG_FILE_PATH || './logs',
 
   // CORS 配置
-  corsOrigin: getArray('CORS_ORIGIN', ['http://localhost:3000', 'http://localhost:5173']),
+  corsOrigin: process.env.NODE_ENV === 'development' 
+    ? ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:3002', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173', 'http://127.0.0.1:3002']
+    : getArray('CORS_ORIGIN', ['http://localhost:3000', 'http://localhost:5173']),
 
   // 安全配置
   sessionTimeout: getNumber('SESSION_TIMEOUT', 360000), // 1小时
