@@ -1,16 +1,15 @@
-# Auth Service Documentation
+# Auth Service - 认证微服务
 
 ## 概述
 
-Auth Service 是美容院预约管理系统的**独立认证服务**，负责处理用户身份验证、授权和租户管理。
+Auth Service 是**独立认证微服务**，负责处理用户身份验证、授权和租户管理。采用微服务架构，为所有业务系统提供统一的认证服务。
 
-## 架构设计
-
-### 系统定位
-- **独立系统**: 有自己的数据库、端口、部署流程
-- **共享服务**: 为所有业务系统（美业、奶茶店等）提供认证服务
-- **端口**: 3002 (避免与 booking-service:3002 冲突)
-- **数据库**: auth_db (独立数据库，与业务系统隔离)
+### 核心功能
+- **用户认证**: 注册、登录、登出、Token 管理
+- **邮箱验证**: 邮箱验证码、密码重置
+- **租户管理**: 多租户数据隔离、租户信息管理
+- **会话管理**: Session 创建、失效、管理
+- **安全防护**: 速率限制、密码强度、Token 黑名单
 
 ### 技术栈
 - **Runtime**: Node.js + TypeScript
@@ -18,324 +17,901 @@ Auth Service 是美容院预约管理系统的**独立认证服务**，负责处
 - **Database**: PostgreSQL + Prisma ORM
 - **Authentication**: JWT (Access + Refresh Tokens)
 - **Password**: bcrypt 哈希加密
-- **Email**: SendGrid 邮件服务
-- **Validation**: Joi 数据验证和安全检查
+- **Email**: 自定义 SMTP 服务
+- **Validation**: Joi 数据验证
 - **Logging**: Winston 日志系统
 - **Security**: Helmet, CORS, Rate Limiting
 
-## 目录结构
+## 快速开始
 
-```
-auth-service/
-├── docs/                    # 📚 项目文档
-│   ├── README.md           # 总体说明
-│   ├── API.md              # API 接口文档
-│   ├── DATABASE.md         # 数据库设计
-│   └── DEPLOYMENT.md       # 部署说明
-├── src/                     # 📦 源代码
-│   ├── config/             # ⚙️ 配置管理
-│   │   ├── index.ts        # 配置模块统一导出
-│   │   ├── env.ts          # 环境变量配置
-│   │   ├── database.ts     # 数据库连接配置
-│   │   ├── redis.ts        # Redis 连接配置
-│   │   ├── jwt.ts          # JWT 配置
-│   │   ├── cors.ts         # CORS 配置
-│   │   └── email.ts        # 邮件服务配置
-│   ├── constants/          # 📋 常量定义
-│   │   ├── index.ts        # 常量统一导出
-│   │   ├── DATABASE_CONSTANTS.ts    # 数据库常量
-│   │   ├── JWT_CONSTANTS.ts         # JWT 常量
-│   │   ├── LOGGER_CONSTANTS.ts      # 日志常量
-│   │   ├── REDIS_CONSTANTS.ts       # Redis 常量
-│   │   ├── AUTHSERVICE.ts           # 认证服务常量
-│   │   ├── TENANTSERVICE.ts         # 租户服务常量
-│   │   ├── SESSION.ts               # 会话常量
-│   │   ├── PASSWORD.ts              # 密码常量
-│   │   ├── EMAIL.ts                 # 邮件常量
-│   │   └── SUBSCRIPTION.ts          # 订阅常量
-│   ├── controllers/        # 🎮 控制器层
-│   │   ├── index.ts        # 控制器统一导出
-│   │   ├── authController.ts        # 认证控制器
-│   │   ├── sessionController.ts     # 会话控制器
-│   │   ├── tenantController.ts      # 租户控制器
-│   │   ├── subscriptionController.ts # 订阅控制器
-│   │   └── emailController.ts       # 邮件控制器
-│   ├── middleware/         # 🔒 中间件层
-│   │   ├── index.ts        # 中间件统一导出
-│   │   ├── security.ts     # 安全中间件 (Helmet, CORS)
-│   │   ├── rateLimiter.ts  # 速率限制中间件
-│   │   ├── jwtAuth.ts      # JWT 认证中间件
-│   │   ├── errorHandler.ts # 错误处理中间件
-│   │   ├── dataCleaner.ts  # 数据清理中间件
-│   │   └── validators.ts   # 验证中间件
-│   ├── routes/             # 🛣️ 路由层
-│   │   ├── authRoutes.ts   # 认证路由
-│   │   ├── sessionRoutes.ts # 会话路由
-│   │   ├── tenantRoutes.ts # 租户路由
-│   │   └── emailRoutes.ts  # 邮件路由
-│   ├── services/           # 🔧 业务服务层
-│   │   ├── index.ts        # 服务统一导出
-│   │   ├── authService.ts  # 认证服务
-│   │   ├── sessionService.ts # 会话服务
-│   │   ├── passwordService.ts # 密码服务
-│   │   ├── emailService.ts # 邮件服务
-│   │   ├── subscriptionService.ts # 订阅服务
-│   │   └── tenantService.ts # 租户服务
-│   ├── types/              # 📝 TypeScript 类型
-│   │   ├── index.ts        # 类型统一导出
-│   │   ├── express.ts      # Express 类型扩展
-│   │   ├── env_types.ts    # 环境变量类型
-│   │   ├── database_types.ts # 数据库类型
-│   │   ├── logger_types.ts # 日志类型
-│   │   ├── jwt_types.ts    # JWT 类型
-│   │   ├── auth_types.ts   # 认证类型
-│   │   ├── authService.ts  # 认证服务类型
-│   │   ├── sessionService.ts # 会话服务类型
-│   │   ├── tenantService.ts # 租户服务类型
-│   │   ├── password_types.ts # 密码类型
-│   │   ├── email_types.ts  # 邮件类型
-│   │   ├── subscription_types.ts # 订阅类型
-│   │   └── validator_types.ts # 验证器类型
-│   ├── utils/              # 🛠️ 工具函数
-│   │   ├── index.ts        # 工具统一导出
-│   │   ├── logger.ts       # 日志工具
-│   │   ├── delay.ts        # 延迟工具
-│   │   ├── redis-prefix.ts # Redis 前缀工具
-│   │   ├── redis-helper.ts # Redis 辅助工具
-│   │   ├── token-blacklist.ts # Token 黑名单
-│   │   ├── password.ts     # 密码工具
-│   │   ├── loginLock.ts    # 登录锁定工具
-│   │   ├── email-template-renderer.ts # 邮件模板渲染器
-│   │   └── phone-validator.ts # 手机号验证工具
-│   ├── validators/         # ✅ 数据验证器
-│   │   ├── index.ts        # 验证器统一导出
-│   │   ├── account-validator.ts # 账户验证器
-│   │   └── password-validator.ts # 密码验证器
-│   └── templates/          # 📧 邮件模板
-│       └── email/          # 邮件模板目录
-│           ├── verification.pug    # 邮箱验证模板
-│           ├── reset-password.pug  # 密码重置模板
-│           └── subscription.pug    # 订阅通知模板
-├── prisma/                  # 🗄️ 数据库相关
-│   ├── schema.prisma       # 数据库模式
-│   ├── migrations/         # 数据库迁移
-│   └── seed.ts             # 初始数据
-├── dist/                    # 📤 编译输出 (生产环境)
-├── generated/               # 🤖 自动生成的代码
-│   └── prisma/             # Prisma 客户端
-├── logs/                    # 📋 日志文件
-├── node_modules/            # 📦 依赖包
-├── .env                     # 🔐 环境变量 (不提交到Git)
-├── env.sample               # 📋 环境变量模板
-├── package.json             # 📦 项目配置
-├── tsconfig.json            # 🔧 TypeScript 配置
-└── src/app.ts               # 🚀 应用入口文件
-```
+### 1. 环境准备
 
-## 核心功能
-
-### 1. 租户管理 (Multi-tenant)
-- 租户注册和激活
-- 子域名管理 (salon123.beauty.domain.com)
-- 业务类型支持 (beauty, teashop, 等)
-- 租户配置和权限管理
-
-### 2. 用户认证
-- 用户注册和登录
-- JWT Access + Refresh Token 机制
-- 密码安全策略
-- 邮箱验证和密码重置
-- 登录失败锁定和速率限制
-
-### 3. 权限授权
-- 基于角色的权限控制 (RBAC)
-- 跨系统权限管理
-- API 级别的访问控制
-- 资源级别的数据隔离
-
-### 4. 安全特性
-- 密码强度验证 (zxcvbn)
-- 防暴力破解保护
-- JWT Token 安全管理
-- 会话管理和清理
-- 审计日志记录
-
-## 数据库设计
-
-### 独立数据库策略
-- **数据库名**: `auth_db`
-- **与业务系统隔离**: booking-service 使用 `booking_db`
-- **数据安全**: 认证数据与业务数据分离
-- **独立扩展**: 可以独立优化和扩展
-
-### 核心表结构
-```sql
--- 租户表
-tenants (
-  id, email, phone, store_name, subdomain, 
-  password_hash, address, email_verified_at, 
-  email_verification_token, created_at, updated_at, deleted_at
-)
-
--- 会话表
-sessions (
-  id, tenant_id, token_jti, refresh_token, 
-  user_agent, ip_address, device_type, 
-  expires_at, created_at, updated_at
-)
-
--- 密码重置令牌表
-password_reset_tokens (
-  id, tenant_id, email, reset_token, 
-  expires_at, used_at, created_at
-)
-```
-
-## API 设计
-
-### 认证相关
-```
-POST /api/v1/auth/register         # 用户注册
-POST /api/v1/auth/login            # 用户登录
-POST /api/v1/auth/logout           # 用户登出
-POST /api/v1/auth/refresh          # 刷新 Token
-POST /api/v1/auth/verify-email     # 邮箱验证
-POST /api/v1/auth/initiate-reset   # 发起密码重置
-POST /api/v1/auth/reset-password   # 重置密码
-PUT  /api/v1/auth/password         # 修改密码
-```
-
-### 租户相关
-```
-POST /api/v1/tenant/register       # 租户注册
-GET  /api/v1/tenant/:id            # 获取租户信息
-PUT  /api/v1/tenant/:id            # 更新租户信息
-DELETE /api/v1/tenant/:id          # 软删除租户
-POST /api/v1/tenant/:id/verify     # 邮箱验证激活
-```
-
-### 会话相关
-```
-POST /api/v1/session/create        # 创建会话
-GET  /api/v1/session/list          # 获取会话列表
-DELETE /api/v1/session/:id         # 删除会话
-POST /api/v1/session/invalidate-all # 使所有会话失效
-```
-
-### 邮件相关
-```
-POST /api/v1/email/send-verification # 发送验证邮件
-POST /api/v1/email/send-reset       # 发送重置邮件
-```
-
-### 订阅相关
-```
-GET /api/v1/subscription/:tenantId  # 获取订阅信息
-```
-
-### 系统相关
-```
-GET  /health                        # 健康检查
-GET  /                              # 欢迎页
-```
-
-## 与其他系统的集成
-
-### 1. 与 Booking Service 集成
-```typescript
-// Booking Service 验证用户身份
-const token = req.headers.authorization;
-const payload = await verifyJWT(token); // 使用共享的 JWT_SECRET
-const tenantId = payload.tenantId;      // 获取租户 ID 进行数据隔离
-```
-
-### 2. 与 Nginx 集成 (未来)
-```nginx
-# Nginx 验证用户身份
-location /api/bookings/ {
-    auth_request /auth-validate;  # 调用 Auth Service 验证
-    proxy_pass http://booking-service;
-}
-```
-
-### 3. 跨系统权限检查
-```typescript
-// 检查用户是否有权限访问特定资源
-POST /api/v1/auth/check-permission
-{
-  "tenantId": "uuid",
-  "businessType": "beauty", 
-  "permission": "booking:write"
-}
-```
-
-## 部署策略
-
-### 开发环境
+#### 安装依赖
 ```bash
-cd auth-service
+# 进入项目目录
+cd services/auth-service
+
+# 安装依赖
 npm install
-cp env.sample .env          # 配置环境变量
-npm run prisma:generate     # 生成 Prisma 客户端
-npm run prisma:migrate      # 数据库迁移
-npm run dev                 # 启动开发服务器 (端口 3002)
+
+# 安装 Prisma CLI
+npm install -g prisma
 ```
 
-### 生产环境
+#### 配置环境变量
 ```bash
-npm run build              # 编译 TypeScript
-npm run prisma:generate    # 生成 Prisma 客户端
-npm run prisma:deploy      # 部署数据库变更
-npm start                  # 启动生产服务器
+# 复制环境变量模板
+cp env.sample .env
+
+# 编辑 .env 文件，配置以下必要参数
 ```
 
-## 安全注意事项
+#### 环境变量配置 (.env)
+```env
+# 基础配置
+NODE_ENV=development
+PORT=3002  # 可以修改为其他端口
 
-1. **强随机密钥**: 生产环境必须更换 JWT_SECRET
-2. **数据库安全**: 使用专用数据库用户和强密码
-3. **HTTPS 强制**: 生产环境必须使用 HTTPS
-4. **速率限制**: 防止暴力破解和 DoS 攻击
-5. **日志监控**: 记录安全事件和异常行为
-6. **定期更新**: 及时更新依赖包和安全补丁
+# 数据库配置
+DATABASE_URL="postgresql://username:password@localhost:5432/auth_db"
 
-## 监控和维护
+# Redis 配置
+REDIS_URL="redis://localhost:6379"
 
-1. **健康检查**: `/health` 端点监控服务状态
-2. **性能监控**: JWT 验证延迟、数据库查询性能
-3. **安全监控**: 登录失败、异常访问模式
-4. **日志分析**: 错误日志、访问日志、安全日志
-5. **备份策略**: 数据库定期备份和恢复测试
+# JWT 密钥 (生产环境必须更换)
+JWT_SECRET="your-super-secret-jwt-key-here"
+JWT_REFRESH_SECRET="your-super-secret-refresh-key-here"
 
-## 技术特性
+# 邮件配置 (自定义 SMTP)
+SMTP_HOST=your-smtp-server.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@domain.com
+SMTP_PASS=your-smtp-password
 
-### 1. 分层架构
-- **配置层 (config/)**: 环境变量、数据库、Redis、JWT、CORS、邮件配置
-- **常量层 (constants/)**: 业务常量、错误码、配置常量
-- **控制器层 (controllers/)**: HTTP 请求处理、参数验证、响应格式化
-- **中间件层 (middleware/)**: 安全中间件、认证中间件、错误处理中间件
-- **路由层 (routes/)**: API 路由定义、路由分组、版本控制
-- **服务层 (services/)**: 业务逻辑处理、数据操作、外部服务调用
-- **类型层 (types/)**: TypeScript 类型定义、接口定义、类型扩展
-- **工具层 (utils/)**: 通用工具函数、日志工具、辅助函数
-- **验证层 (validators/)**: 数据验证、输入校验、格式检查
-- **模板层 (templates/)**: 邮件模板、HTML 模板、Pug 模板
+# 前端 URL (用于邮件链接)
+FRONTEND_URL=http://localhost:3000
 
-### 2. 安全机制
-- **JWT 认证**: Access Token + Refresh Token 机制
-- **密码安全**: bcrypt 哈希、密码强度验证
-- **速率限制**: 防止暴力破解和 DoS 攻击
-- **CORS 配置**: 跨域请求安全控制
-- **Helmet 安全头**: 防止常见 Web 攻击
-- **数据清理**: 输入数据清理和验证
+# 邮件配置
+EMAIL_FROM_NAME=Tymoe
+EMAIL_VERIFICATION_TOKEN_EXPIRY=24h
+EMAIL_RESET_TOKEN_EXPIRY=1h
 
-### 3. 日志系统
-- **Winston 日志**: 结构化日志记录
-- **错误捕获**: 全局异常捕获和处理
-- **审计日志**: 安全事件和操作记录
-- **性能监控**: 请求响应时间和性能指标
+# 速率限制配置
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX=100
+LOGIN_RATE_LIMIT_MAX=5
+REGISTER_RATE_LIMIT_MAX=3
 
-### 4. 邮件系统
-- **SendGrid 集成**: 可靠的邮件发送服务
-- **Pug 模板**: 动态邮件模板渲染
-- **邮件类型**: 验证邮件、重置密码邮件、通知邮件
-- **模板管理**: 集中化的邮件模板管理 
+# 密码配置
+BCRYPT_ROUNDS=12
+PASSWORD_MIN_LENGTH=8
+PASSWORD_REQUIRE_UPPERCASE=true
+PASSWORD_REQUIRE_LOWERCASE=true
+PASSWORD_REQUIRE_NUMBERS=true
+PASSWORD_REQUIRE_SPECIAL_CHARS=true
+
+# 邮箱验证配置
+REQUIRE_EMAIL_VERIFICATION=true
+```
+
+### 2. 数据库配置
+
+#### 创建 PostgreSQL 数据库
+```sql
+-- 连接到 PostgreSQL
+psql -U postgres
+
+-- 创建数据库
+CREATE DATABASE auth_db;
+
+-- 创建用户 (可选)
+CREATE USER auth_user WITH PASSWORD 'your-password';
+GRANT ALL PRIVILEGES ON DATABASE auth_db TO auth_user;
+```
+
+#### 数据库迁移
+```bash
+# 生成 Prisma 客户端
+npm run prisma:generate
+
+# 运行数据库迁移
+npm run prisma:migrate
+
+# 验证数据库连接
+npm run prisma:studio
+```
+
+### 3. Redis 配置
+
+#### 安装 Redis
+```bash
+# macOS
+brew install redis
+brew services start redis
+
+# Ubuntu/Debian
+sudo apt-get install redis-server
+sudo systemctl start redis-server
+
+# 验证 Redis 连接
+redis-cli ping
+# 应该返回 PONG
+```
+
+### 4. 启动服务
+
+#### 开发模式启动
+```bash
+# 启动开发服务器
+npm run dev
+
+# 服务将在 http://localhost:3002 启动
+# 访问 http://localhost:3002 查看欢迎页面
+```
+
+#### 验证服务状态
+```bash
+# 健康检查
+curl http://localhost:3002/health
+
+# 应该返回
+{
+  "status": "ok",
+  "timestamp": "2025-08-02T01:20:00.000Z",
+  "service": "auth-service"
+}
+```
+
+## 已实现的接口
+
+### 认证相关接口 ✅
+```
+POST /api/v1/auth/register              # 用户注册
+POST /api/v1/auth/login                 # 用户登录
+POST /api/v1/auth/logout                # 用户登出
+POST /api/v1/auth/refresh               # 刷新 Token
+POST /api/v1/auth/verify-email          # 邮箱验证
+POST /api/v1/auth/resend-verification   # 重新发送验证码
+POST /api/v1/auth/initiate-reset        # 发起密码重置
+POST /api/v1/auth/verify-reset-code     # 验证重置码
+POST /api/v1/auth/reset-password        # 重置密码
+PUT  /api/v1/auth/password              # 修改密码
+```
+
+### 租户管理接口 ✅
+```
+GET  /api/v1/tenant/:tenantId           # 获取租户信息
+PUT  /api/v1/tenant/:tenantId           # 更新租户信息
+GET  /api/v1/tenant/check-unique        # 检查字段唯一性
+GET  /api/v1/tenant/by-email            # 根据邮箱获取租户
+DELETE /api/v1/tenant/:tenantId         # 软删除租户
+```
+
+### 会话管理接口 ✅
+```
+POST /api/v1/session/invalidate         # 失效当前会话
+POST /api/v1/session/invalidate-all     # 失效所有会话
+```
+
+## 微服务协作方案
+
+### 1. Token 结构与权限判断
+
+#### JWT Token 结构
+```typescript
+interface JWTToken {
+  tenantId: string;           // 租户ID - 用于数据隔离
+  email: string;              // 用户邮箱
+  storeName: string;          // 店铺名称
+  subdomain: string;          // 子域名
+  emailVerified: boolean;     // 邮箱是否已验证
+  sessionId: string;          // 会话ID
+  type: 'access' | 'refresh'; // Token类型
+  iat: number;               // 签发时间
+  exp: number;               // 过期时间
+  jti: string;               // Token唯一ID
+}
+```
+
+#### Token 验证中间件 (其他服务使用)
+```typescript
+// 共享的 Token 验证函数
+import { verifyToken } from '@shared/auth-utils';
+
+const authenticateRequest = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'No token provided' 
+      });
+    }
+
+    const payload = await verifyToken(token, 'access');
+    
+    // 设置请求上下文
+    req.tenantId = payload.tenantId;
+    req.userEmail = payload.email;
+    req.emailVerified = payload.emailVerified;
+    req.sessionId = payload.sessionId;
+    
+    next();
+  } catch (error) {
+    return res.status(401).json({ 
+      success: false, 
+      error: 'Invalid or expired token' 
+    });
+  }
+};
+```
+
+### 2. 与前端协作
+
+#### 前端 Token 管理
+```typescript
+// 1. 登录后存储 Token
+const handleLogin = async (email: string, password: string) => {
+  const response = await fetch('/api/v1/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  
+  const { accessToken, refreshToken, tenantId, emailVerified } = await response.json();
+  
+  // 存储 Token
+  localStorage.setItem('accessToken', accessToken);
+  localStorage.setItem('refreshToken', refreshToken);
+  localStorage.setItem('tenantId', tenantId);
+  localStorage.setItem('emailVerified', emailVerified.toString());
+  
+  return { success: true };
+};
+
+// 2. 请求拦截器 - 自动添加 Token
+axios.interceptors.request.use(config => {
+  const token = localStorage.getItem('accessToken');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// 3. 响应拦截器 - Token 自动刷新
+axios.interceptors.response.use(
+  response => response,
+  async error => {
+    const originalRequest = error.config;
+    
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (refreshToken) {
+        try {
+          const refreshResponse = await fetch('/api/v1/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken })
+          });
+          
+          const { accessToken: newToken } = await refreshResponse.json();
+          localStorage.setItem('accessToken', newToken);
+          
+          // 重试原请求
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          return axios(originalRequest);
+        } catch (refreshError) {
+          // 刷新失败，清除 Token 并跳转登录
+          localStorage.removeItem('accessToken');
+          localStorage.removeItem('refreshToken');
+          localStorage.removeItem('tenantId');
+          window.location.href = '/login';
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// 4. 权限检查 Hook
+const useAuth = () => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
+  
+  useEffect(() => {
+    const token = localStorage.getItem('accessToken');
+    const tenantId = localStorage.getItem('tenantId');
+    const emailVerified = localStorage.getItem('emailVerified') === 'true';
+    
+    if (token && tenantId) {
+      setIsAuthenticated(true);
+      setUser({ tenantId, emailVerified });
+    }
+  }, []);
+  
+  return { isAuthenticated, user };
+};
+
+// 5. 受保护的路由组件
+const ProtectedRoute = ({ children, requireEmailVerified = false }) => {
+  const { isAuthenticated, user } = useAuth();
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/login" />;
+  }
+  
+  if (requireEmailVerified && !user?.emailVerified) {
+    return <Navigate to="/verify-email" />;
+  }
+  
+  return children;
+};
+```
+
+#### 前端错误处理
+```typescript
+// 统一错误处理
+const handleApiError = (error) => {
+  const status = error.response?.status;
+  const code = error.response?.data?.code;
+  const message = error.response?.data?.error;
+  
+  switch (code) {
+    case 'UNAUTHORIZED':
+      // Token 过期，已在拦截器中处理
+      break;
+    case 'FORBIDDEN':
+      showNotification('权限不足', 'error');
+      break;
+    case 'SUBSCRIPTION_REQUIRED':
+      showSubscriptionModal();
+      break;
+    case 'EMAIL_NOT_VERIFIED':
+      navigate('/verify-email');
+      break;
+    case 'FEATURE_NOT_AVAILABLE':
+      showUpgradeModal();
+      break;
+    case 'RATE_LIMIT_EXCEEDED':
+      showNotification('请求过于频繁，请稍后再试', 'warning');
+      break;
+    default:
+      showNotification(message || '请求失败', 'error');
+  }
+};
+```
+
+### 3. 与其他微服务协作
+
+#### 与 Booking Service 协作
+
+**Booking Service 需要实现的接口：**
+```typescript
+// 1. 身份验证中间件
+const authenticateBookingRequest = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    const payload = await verifyToken(token, 'access');
+    req.tenantId = payload.tenantId;
+    req.userEmail = payload.email;
+    req.emailVerified = payload.emailVerified;
+    
+    next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+// 2. 数据隔离中间件
+const ensureDataIsolation = (req, res, next) => {
+  const { tenantId } = req;
+  
+  // 确保所有数据库查询都包含 tenant_id 条件
+  req.prisma = prisma.$extends({
+    query: {
+      $allModels: {
+        async $allOperations({ operation, args, query }) {
+          if (operation === 'findMany' || operation === 'findFirst' || operation === 'findUnique') {
+            args.where = { ...args.where, tenant_id: tenantId };
+          }
+          if (operation === 'create') {
+            args.data = { ...args.data, tenant_id: tenantId };
+          }
+          if (operation === 'update' || operation === 'delete') {
+            args.where = { ...args.where, tenant_id: tenantId };
+          }
+          return query(args);
+        }
+      }
+    }
+  });
+  
+  next();
+};
+
+// 3. 权限检查中间件
+const checkBookingPermission = async (req, res, next) => {
+  const { tenantId } = req;
+  const { bookingId } = req.params;
+  
+  const booking = await prisma.booking.findFirst({
+    where: { 
+      id: bookingId,
+      tenant_id: tenantId 
+    }
+  });
+  
+  if (!booking) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  
+  req.booking = booking;
+  next();
+};
+```
+
+**Booking Service 路由配置：**
+```typescript
+// 所有路由都需要身份验证
+router.use(authenticateBookingRequest);
+router.use(ensureDataIsolation);
+
+// 获取预约列表
+router.get('/bookings', async (req, res) => {
+  const { tenantId } = req;
+  
+  const bookings = await req.prisma.booking.findMany({
+    where: { tenant_id: tenantId },
+    include: { customer: true }
+  });
+  
+  res.json({ success: true, data: bookings });
+});
+
+// 创建预约 (需要邮箱验证)
+router.post('/bookings', 
+  (req, res, next) => {
+    if (!req.emailVerified) {
+      return res.status(403).json({ 
+        error: 'Email verification required' 
+      });
+    }
+    next();
+  },
+  async (req, res) => {
+    const { tenantId } = req;
+    
+    const booking = await req.prisma.booking.create({
+      data: {
+        ...req.body,
+        tenant_id: tenantId
+      }
+    });
+    
+    res.json({ success: true, data: booking });
+  }
+);
+
+// 更新预约 (需要权限检查)
+router.put('/bookings/:bookingId', 
+  checkBookingPermission,
+  async (req, res) => {
+    const { bookingId } = req.params;
+    
+    const booking = await req.prisma.booking.update({
+      where: { id: bookingId },
+      data: req.body
+    });
+    
+    res.json({ success: true, data: booking });
+  }
+);
+```
+
+#### 与 Subscription Service 协作
+
+**Subscription Service 需要实现的接口：**
+```typescript
+// 1. 订阅状态检查中间件
+const checkSubscriptionStatus = async (req, res, next) => {
+  try {
+    const { tenantId } = req;
+    
+    // 调用 Subscription Service
+    const subscriptionResponse = await fetch(
+      `${SUBSCRIPTION_SERVICE_URL}/api/v1/subscription/${tenantId}`,
+      {
+        headers: {
+          'Authorization': req.headers.authorization,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (!subscriptionResponse.ok) {
+      return res.status(402).json({ 
+        error: 'Subscription check failed',
+        code: 'SUBSCRIPTION_REQUIRED'
+      });
+    }
+    
+    const subscription = await subscriptionResponse.json();
+    
+    if (!subscription.active) {
+      return res.status(402).json({ 
+        error: 'Active subscription required',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscription: subscription
+      });
+    }
+    
+    req.subscription = subscription;
+    next();
+  } catch (error) {
+    return res.status(500).json({ error: 'Subscription check failed' });
+  }
+};
+
+// 2. 功能权限检查
+const checkFeaturePermission = (feature: string) => {
+  return (req, res, next) => {
+    const { subscription } = req;
+    
+    if (!subscription.features.includes(feature)) {
+      return res.status(403).json({ 
+        error: `Feature '${feature}' not available in current plan`,
+        code: 'FEATURE_NOT_AVAILABLE'
+      });
+    }
+    
+    next();
+  };
+};
+```
+
+**Booking Service 集成订阅检查：**
+```typescript
+// 高级功能需要订阅检查
+router.post('/bookings/advanced', 
+  checkSubscriptionStatus,
+  checkFeaturePermission('advanced_booking'),
+  async (req, res) => {
+    // 高级预约功能
+    const booking = await req.prisma.booking.create({
+      data: {
+        ...req.body,
+        tenant_id: req.tenantId,
+        type: 'advanced'
+      }
+    });
+    
+    res.json({ success: true, data: booking });
+  }
+);
+
+// 批量操作需要订阅检查
+router.post('/bookings/bulk', 
+  checkSubscriptionStatus,
+  checkFeaturePermission('bulk_operations'),
+  async (req, res) => {
+    // 批量创建预约
+    const bookings = await req.prisma.booking.createMany({
+      data: req.body.bookings.map(booking => ({
+        ...booking,
+        tenant_id: req.tenantId
+      }))
+    });
+    
+    res.json({ success: true, count: bookings.count });
+  }
+);
+```
+
+### 4. 微服务间 Token 验证
+
+#### Auth Service 提供验证接口
+```typescript
+// GET /api/v1/auth/verify
+const verifyTokenEndpoint = async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ valid: false });
+    }
+
+    const payload = await verifyToken(token, 'access');
+    res.json({ 
+      valid: true, 
+      tenantId: payload.tenantId,
+      email: payload.email,
+      emailVerified: payload.emailVerified,
+      sessionId: payload.sessionId
+    });
+  } catch (error) {
+    res.status(401).json({ valid: false });
+  }
+};
+
+// POST /api/v1/auth/validate-session
+const validateSessionEndpoint = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId }
+    });
+    
+    if (!session || session.expires_at < new Date()) {
+      return res.status(401).json({ valid: false });
+    }
+    
+    res.json({ valid: true, session });
+  } catch (error) {
+    res.status(401).json({ valid: false });
+  }
+};
+```
+
+#### 其他服务调用验证接口
+```typescript
+// 其他服务可以调用 Auth Service 验证 Token
+const validateTokenWithAuthService = async (token: string) => {
+  try {
+    const response = await fetch(`${AUTH_SERVICE_URL}/api/v1/auth/verify`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+};
+```
+
+### 5. 数据隔离策略
+
+#### 数据库层面隔离
+```sql
+-- 所有业务表都必须包含 tenant_id 字段
+CREATE TABLE bookings (
+  id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  customer_id UUID,
+  service_id UUID,
+  booking_date TIMESTAMP,
+  status VARCHAR(50),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  
+  -- 索引优化
+  INDEX idx_tenant_id (tenant_id),
+  INDEX idx_tenant_booking_date (tenant_id, booking_date),
+  
+  -- 外键约束
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  FOREIGN KEY (customer_id) REFERENCES customers(id),
+  FOREIGN KEY (service_id) REFERENCES services(id)
+);
+```
+
+#### 应用层面隔离
+```typescript
+// 所有查询都必须包含 tenant_id 条件
+const getBookings = async (tenantId: string) => {
+  return await prisma.booking.findMany({
+    where: { tenant_id: tenantId },
+    include: { customer: true, service: true }
+  });
+};
+
+// 创建记录时自动添加 tenant_id
+const createBooking = async (tenantId: string, data: any) => {
+  return await prisma.booking.create({
+    data: {
+      ...data,
+      tenant_id: tenantId
+    }
+  });
+};
+
+// 更新记录时验证权限
+const updateBooking = async (tenantId: string, bookingId: string, data: any) => {
+  return await prisma.booking.update({
+    where: { 
+      id: bookingId,
+      tenant_id: tenantId  // 确保只能更新自己的记录
+    },
+    data
+  });
+};
+```
+
+### 6. 错误处理与状态码
+
+#### 统一错误响应格式
+```typescript
+interface ApiError {
+  success: false;
+  error: string;
+  code?: string;
+  details?: any;
+}
+
+// 常见错误码
+const ERROR_CODES = {
+  UNAUTHORIZED: 'UNAUTHORIZED',           // 401 - 未认证
+  FORBIDDEN: 'FORBIDDEN',                 // 403 - 无权限
+  NOT_FOUND: 'NOT_FOUND',                 // 404 - 资源不存在
+  VALIDATION_ERROR: 'VALIDATION_ERROR',   // 400 - 验证错误
+  SUBSCRIPTION_REQUIRED: 'SUBSCRIPTION_REQUIRED', // 402 - 需要订阅
+  RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED',    // 429 - 速率限制
+  EMAIL_NOT_VERIFIED: 'EMAIL_NOT_VERIFIED',       // 403 - 邮箱未验证
+  FEATURE_NOT_AVAILABLE: 'FEATURE_NOT_AVAILABLE'  // 403 - 功能不可用
+};
+```
+
+#### 前端错误处理
+```typescript
+// 前端统一处理各种错误
+const handleApiError = (error) => {
+  const status = error.response?.status;
+  const code = error.response?.data?.code;
+  const message = error.response?.data?.error;
+  
+  switch (code) {
+    case 'UNAUTHORIZED':
+      // Token 过期，已在拦截器中处理
+      break;
+    case 'FORBIDDEN':
+      showNotification('权限不足', 'error');
+      break;
+    case 'SUBSCRIPTION_REQUIRED':
+      showSubscriptionModal();
+      break;
+    case 'EMAIL_NOT_VERIFIED':
+      navigate('/verify-email');
+      break;
+    case 'FEATURE_NOT_AVAILABLE':
+      showUpgradeModal();
+      break;
+    case 'RATE_LIMIT_EXCEEDED':
+      showNotification('请求过于频繁，请稍后再试', 'warning');
+      break;
+    default:
+      showNotification(message || '请求失败', 'error');
+  }
+};
+```
+
+## Postman 接口测试指南
+
+### 1. 环境配置
+
+#### 创建 Postman 环境
+1. 打开 Postman
+2. 点击右上角 "Environment" → "New"
+3. 创建环境变量：
+   - `base_url`: `http://localhost:3002`
+   - `access_token`: (留空，登录后自动填充)
+   - `refresh_token`: (留空，登录后自动填充)
+   - `tenant_id`: (留空，登录后自动填充)
+
+#### 设置请求头
+```json
+{
+  "Content-Type": "application/json",
+  "Authorization": "Bearer {{access_token}}"
+}
+```
+
+### 2. 接口测试流程
+
+#### 步骤 1: 用户注册
+```http
+POST {{base_url}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "Test123456!",
+  "storeName": "Test Store",
+  "subdomain": "teststore"
+}
+```
+
+#### 步骤 2: 邮箱验证
+```http
+POST {{base_url}}/api/v1/auth/verify-email
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "code": "123456"
+}
+```
+
+#### 步骤 3: 用户登录
+```http
+POST {{base_url}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "Test123456!"
+}
+```
+
+#### 步骤 4: 设置环境变量
+在 Postman 的 Tests 标签页添加：
+```javascript
+if (pm.response.code === 200) {
+    const response = pm.response.json();
+    if (response.success && response.accessToken) {
+        pm.environment.set("access_token", response.accessToken);
+        pm.environment.set("refresh_token", response.refreshToken);
+        pm.environment.set("tenant_id", response.tenantId);
+    }
+}
+```
+
+#### 步骤 5: 测试受保护的接口
+```http
+GET {{base_url}}/api/v1/tenant/{{tenant_id}}
+Authorization: Bearer {{access_token}}
+```
+
+## 部署和运维
+
+### 生产环境配置
+```bash
+# 1. 构建应用
+npm run build
+
+# 2. 设置生产环境变量
+NODE_ENV=production
+JWT_SECRET=your-super-secure-production-secret
+DATABASE_URL=postgresql://user:pass@prod-db:5432/auth_db
+
+# 3. 运行数据库迁移
+npm run prisma:migrate:deploy
+
+# 4. 启动服务
+npm start
+```
+
+### 监控和日志
+```bash
+# 查看服务日志
+tail -f logs/app.log
+
+# 监控服务状态
+curl http://localhost:3002/health
+
+# 数据库连接检查
+npm run prisma:studio
+```
+
+### 安全注意事项
+1. **生产环境必须更换 JWT 密钥**
+2. **使用 HTTPS 和强密码**
+3. **定期更新依赖包**
+4. **监控异常登录行为**
+5. **备份数据库和日志**
+
+---
+
+现在你可以开始测试所有接口了！🎉 
