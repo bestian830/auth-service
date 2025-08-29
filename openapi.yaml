@@ -1,0 +1,332 @@
+openapi: 3.1.0
+info:
+  title: TYMOE Auth Service (R4 Production)
+  version: 0.2.2
+  description: 生产级 OIDC 认证服务，支持浏览器流、Token Introspection、速率限制、CSRF防护
+servers:
+  - url: http://localhost:8080
+paths:
+  /.well-known/openid-configuration:
+    get:
+      summary: OIDC Discovery
+      responses:
+        '200':
+          description: OpenID Connect Discovery Document
+          
+  /jwks.json:
+    get:
+      summary: JSON Web Key Set (JWKS)
+      responses:
+        '200':
+          description: JSON Web Key Set for token verification
+          headers:
+            Cache-Control:
+              description: Public cache control with 1 hour max-age
+              schema:
+                type: string
+            ETag:
+              description: Entity tag for cache validation
+              schema:
+                type: string
+        '304':
+          description: Not Modified (cache hit)
+          
+  /oauth/authorize:
+    get:
+      summary: OAuth Authorization Endpoint (Browser Flow)
+      description: 启动 OIDC 浏览器认证流，支持 PKCE 和严格参数校验
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: scope
+          in: query
+          required: true
+          schema:
+            type: string
+            description: "Valid scopes: openid, profile, email, offline_access"
+        - name: state
+          in: query
+          required: true
+          description: CSRF protection state parameter (mandatory)
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          schema:
+            type: string
+            enum: [S256]
+            default: S256
+        - name: nonce
+          in: query
+          schema:
+            type: string
+          description: Required when scope contains 'openid' and REQUIRE_NONCE=true
+      responses:
+        '302':
+          description: Redirect to login page or client callback with authorization code
+        '400':
+          description: Invalid request parameters
+          
+  /login:
+    get:
+      summary: Login Page
+      description: 显示登录表单，包含 CSRF 保护
+      parameters:
+        - name: return_to
+          in: query
+          schema:
+            type: string
+          description: Return URL after successful login
+      responses:
+        '200':
+          description: Login form HTML
+    post:
+      summary: Process Login
+      description: 处理登录请求，包含速率限制和 CSRF 保护
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [email, password, _csrf]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                return_to:
+                  type: string
+                _csrf:
+                  type: string
+      responses:
+        '302':
+          description: Redirect after successful login
+        '400':
+          description: Missing required fields
+        '401':
+          description: Invalid credentials
+        '429':
+          description: Rate limit exceeded
+          
+  /logout:
+    get:
+      summary: Logout Endpoint
+      parameters:
+        - name: post_logout_redirect_uri
+          in: query
+          schema:
+            type: string
+          description: Validated redirect URI after logout
+      responses:
+        '200':
+          description: Logged out successfully
+        '302':
+          description: Redirect to post_logout_redirect_uri
+          
+  /oauth/token:
+    post:
+      summary: Token Endpoint
+      description: Exchange authorization code or refresh token for access tokens (速率限制)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [grant_type, code, code_verifier, client_id, redirect_uri]
+                  properties:
+                    grant_type: 
+                      type: string
+                      enum: [authorization_code]
+                    code: 
+                      type: string
+                    code_verifier: 
+                      type: string
+                    client_id: 
+                      type: string
+                    redirect_uri: 
+                      type: string
+                - type: object
+                  required: [grant_type, refresh_token]
+                  properties:
+                    grant_type: 
+                      type: string
+                      enum: [refresh_token]
+                    refresh_token: 
+                      type: string
+      responses:
+        '200':
+          description: Token response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                    enum: [Bearer]
+                  expires_in:
+                    type: integer
+                  refresh_token:
+                    type: string
+                  id_token:
+                    type: string
+                    description: Present when scope contains 'openid'
+        '400':
+          description: Invalid request or unsupported grant type
+        '401':
+          description: Invalid refresh token
+        '429':
+          description: Rate limit exceeded
+          
+  /oauth/revoke:
+    post:
+      summary: Token Revocation Endpoint
+      description: Revoke refresh tokens and token families
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Token revoked successfully
+        '400':
+          description: Invalid request
+          
+  /oauth/introspect:
+    post:
+      summary: Token Introspection Endpoint (RFC 7662)
+      description: Validate and inspect access tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: The access token to introspect
+      responses:
+        '200':
+          description: Introspection response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: boolean
+                    description: Whether the token is active
+                  sub:
+                    type: string
+                    description: Subject identifier
+                  aud:
+                    type: string
+                    description: Audience
+                  iss:
+                    type: string
+                    description: Issuer
+                  exp:
+                    type: integer
+                    description: Expiration time
+                  iat:
+                    type: integer
+                    description: Issued at time
+                  tenant_id:
+                    type: string
+                    description: Tenant identifier
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+                  acr:
+                    type: string
+                    description: Authentication Context Class Reference
+        '400':
+          description: Invalid request
+          
+  /userinfo:
+    get:
+      summary: UserInfo Endpoint
+      description: Return user claims using Bearer token
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub:
+                    type: string
+                  tenant_id:
+                    type: string
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+                  acr:
+                    type: string
+        '401':
+          description: Invalid or missing Bearer token
+          
+  /metrics:
+    get:
+      summary: Prometheus Metrics
+      description: Application metrics for monitoring
+      responses:
+        '200':
+          description: Prometheus formatted metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+                
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

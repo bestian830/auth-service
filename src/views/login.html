@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sign in - tymoe</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:#f6f7f9; display:flex; align-items:center; justify-content:center; height:100vh; margin:0;}
+    .card { background:#fff; padding:24px; border-radius:16px; width:360px; box-shadow:0 6px 30px rgba(0,0,0,.08);}
+    h1 { margin:0 0 8px; font-size:20px;}
+    form { display:flex; flex-direction:column; gap:12px;}
+    input { padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font-size:14px;}
+    button { background:#111827; color:#fff; border:0; padding:10px 12px; border-radius:10px; cursor:pointer; }
+    .muted { color:#6b7280; font-size:12px; }
+    .err { color:#b91c1c; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>登录 tymoe</h1>
+    <p class="muted">请输入邮箱与密码继续授权。</p>
+    <!-- action=/login -->
+    <form method="POST" action="/login">
+      <input type="email" name="email" placeholder="email" required />
+      <input type="password" name="password" placeholder="password" required />
+      <input type="hidden" name="return_to" value="{{return_to}}" />
+      <input type="hidden" name="_csrf" value="{{csrf}}" />
+      <button type="submit">登录</button>
+      {{#if error}}<p class="err">{{error}}</p>{{/if}}
+    </form>
+  </div>
+</body>
+</html>

@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  password    String   // 简化：直接存明文密码用于演示
+  tenantId    String
+  roles       String[] @default([])
+  createdAt   DateTime @default(now())
+}
+
+model Client {
+  id           String   @id       // client_id
+  name         String
+  redirectUris Json     // string[] of allowed redirect URIs
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model RefreshToken {
+  id               String   @id
+  familyId         String
+  subjectUserId    String?
+  subjectDeviceId  String?
+  clientId         String
+  status           String   @default("active") // active|rotated|revoked
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime
+  rotatedAt        DateTime?
+  revokedAt        DateTime?
+  revokeReason     String?
+
+  @@index([familyId])
+  @@index([subjectUserId])
+  @@index([status])
+}
+
+model AuthorizationCode {
+  id                   String   @id @default(uuid())
+  clientId             String
+  redirectUri          String
+  codeChallenge        String
+  codeChallengeMethod  String   @default("S256")
+  scope                String?
+  state                String?
+  nonce                String?
+  subjectUserId        String?
+  tenantId             String?
+  createdAt            DateTime @default(now())
+  expiresAt            DateTime
+  used                 Boolean  @default(false)
+  usedAt               DateTime?
+
+  @@index([clientId])
+  @@index([subjectUserId])
+  @@index([expiresAt])
+}
+
+model Key {
+  kid          String   @id
+  type         String   // 'RSA'
+  status       String   // 'active' | 'grace' | 'retired'
+  privatePem   String   // PKCS8 PEM（开发期可明文；生产建议加密）
+  publicJwk    Json
+  createdAt    DateTime @default(now())
+  activatedAt  DateTime?
+  retiredAt    DateTime?
+
+  @@index([status])
+}
+
+model TenantClient {
+  id                 String   @id @default(uuid())
+  clientId           String
+  tenantId           String
+  allowedAudPrefixes String[] // 例如: ["tymoe-service:mopai", "tymoe-service:ploml"]
+  allowedScopes      String[] // 例如: ["openid","profile"]
+  defaultAud         String?  // 例如: "tymoe-service:mopai:tenant-dev"
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([clientId, tenantId])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  at          DateTime @default(now())
+  ip          String?
+  userAgent   String?
+  actorUserId String?
+  action      String   // login_success / login_fail / authorize / token_issue / token_refresh / refresh_reuse / revoke / introspect / jwks_rotate / jwks_retire …
+  subject     String?  // token_id / code_id / client_id / tenant_id …
+  detail      Json?
+}

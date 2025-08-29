@@ -1,0 +1,300 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>{{title}} - tymoe</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { 
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      height: 100vh; 
+      margin: 0;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    .card { 
+      background: #fff; 
+      padding: 32px; 
+      border-radius: 20px; 
+      width: 100%; 
+      max-width: 400px; 
+      box-shadow: 0 20px 60px rgba(0,0,0,.15);
+      position: relative;
+    }
+    .lang-switch {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+    }
+    .lang-switch button {
+      background: none;
+      border: 1px solid #e5e7eb;
+      padding: 4px 8px;
+      margin: 0 2px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #6b7280;
+      transition: all 0.2s;
+    }
+    .lang-switch button.active {
+      background: #111827;
+      color: white;
+      border-color: #111827;
+    }
+    .lang-switch button:hover {
+      background: #f3f4f6;
+    }
+    .lang-switch button.active:hover {
+      background: #374151;
+    }
+    h1 { 
+      margin: 0 0 8px; 
+      font-size: 24px; 
+      font-weight: 600;
+      color: #111827;
+    }
+    .subtitle {
+      color: #6b7280; 
+      font-size: 14px; 
+      margin-bottom: 24px;
+    }
+    form { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 16px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    label {
+      font-size: 14px;
+      font-weight: 500;
+      color: #374151;
+    }
+    input[type="email"], input[type="password"] { 
+      padding: 12px 16px; 
+      border: 2px solid #e5e7eb; 
+      border-radius: 12px; 
+      font-size: 16px;
+      transition: border-color 0.2s;
+      outline: none;
+    }
+    input[type="email"]:focus, input[type="password"]:focus {
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    button[type="submit"] { 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff; 
+      border: 0; 
+      padding: 14px 20px; 
+      border-radius: 12px; 
+      cursor: pointer; 
+      font-size: 16px;
+      font-weight: 600;
+      transition: transform 0.2s;
+    }
+    button[type="submit"]:hover {
+      transform: translateY(-1px);
+    }
+    button[type="submit"]:active {
+      transform: translateY(0);
+    }
+    .error { 
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #dc2626; 
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin: 16px 0;
+    }
+    .weak-password-warning {
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      color: #d97706;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-top: 4px;
+      display: none;
+    }
+    .loading {
+      opacity: 0.7;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="lang-switch">
+      <button type="button" onclick="switchLang('zh')" id="lang-zh">中文</button>
+      <button type="button" onclick="switchLang('en')" id="lang-en">EN</button>
+    </div>
+
+    <h1 id="title">{{title}}</h1>
+    <p class="subtitle" id="subtitle">{{subtitle}}</p>
+    
+    {{#if error}}
+    <div class="error" id="error">{{error}}</div>
+    {{/if}}
+    
+    <form method="POST" action="/login" id="loginForm">
+      <div class="form-group">
+        <label for="email" id="email-label">{{email_label}}</label>
+        <input type="email" 
+               id="email" 
+               name="email" 
+               required 
+               autocomplete="email"
+               placeholder="{{email_placeholder}}" />
+      </div>
+      
+      <div class="form-group">
+        <label for="password" id="password-label">{{password_label}}</label>
+        <input type="password" 
+               id="password" 
+               name="password" 
+               required 
+               autocomplete="current-password"
+               placeholder="{{password_placeholder}}" />
+        <div class="weak-password-warning" id="weak-password-warning">
+          <span id="weak-password-text">{{weak_password_text}}</span>
+        </div>
+      </div>
+      
+      <input type="hidden" name="return_to" value="{{return_to}}" />
+      <input type="hidden" name="_csrf" value="{{csrf}}" />
+      
+      <button type="submit" id="submit-btn">{{login_button}}</button>
+    </form>
+  </div>
+
+  <script>
+    const i18n = {
+      zh: {
+        title: '登录 tymoe',
+        subtitle: '请输入邮箱与密码继续授权。',
+        email_label: '邮箱地址',
+        email_placeholder: '请输入邮箱地址',
+        password_label: '密码',
+        password_placeholder: '请输入密码',
+        login_button: '登录',
+        weak_password_text: '⚠️ 检测到弱口令，建议使用更复杂的密码（仅开发环境提示）',
+        errors: {
+          'invalid_credentials': '邮箱或密码错误，请重试。',
+          'too_many_requests': '登录尝试过于频繁，请稍后再试。',
+          'csrf_invalid': 'CSRF 验证失败，请刷新页面重试。',
+          'missing_fields': '请输入邮箱和密码。',
+          'server_error': '服务器错误，请稍后重试。'
+        }
+      },
+      en: {
+        title: 'Sign in to tymoe',
+        subtitle: 'Enter your email and password to continue authorization.',
+        email_label: 'Email Address',
+        email_placeholder: 'Enter your email address',
+        password_label: 'Password',
+        password_placeholder: 'Enter your password',
+        login_button: 'Sign In',
+        weak_password_text: '⚠️ Weak password detected, consider using a stronger password (dev environment only)',
+        errors: {
+          'invalid_credentials': 'Invalid email or password, please try again.',
+          'too_many_requests': 'Too many login attempts, please try again later.',
+          'csrf_invalid': 'CSRF validation failed, please refresh and try again.',
+          'missing_fields': 'Please enter both email and password.',
+          'server_error': 'Server error, please try again later.'
+        }
+      }
+    };
+
+    let currentLang = '{{lang}}' || 'zh';
+
+    function switchLang(lang) {
+      currentLang = lang;
+      updateUI(lang);
+      
+      // 更新 URL 语言参数
+      const url = new URL(window.location);
+      url.searchParams.set('lang', lang);
+      window.history.replaceState({}, '', url);
+    }
+
+    function updateUI(lang) {
+      const texts = i18n[lang];
+      
+      document.getElementById('title').textContent = texts.title;
+      document.getElementById('subtitle').textContent = texts.subtitle;
+      document.getElementById('email-label').textContent = texts.email_label;
+      document.getElementById('email').placeholder = texts.email_placeholder;
+      document.getElementById('password-label').textContent = texts.password_label;
+      document.getElementById('password').placeholder = texts.password_placeholder;
+      document.getElementById('submit-btn').textContent = texts.login_button;
+      document.getElementById('weak-password-text').textContent = texts.weak_password_text;
+      
+      // 更新语言按钮状态
+      document.querySelectorAll('.lang-switch button').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      document.getElementById('lang-' + lang).classList.add('active');
+      
+      // 更新错误消息
+      const errorDiv = document.getElementById('error');
+      if (errorDiv && errorDiv.dataset.key) {
+        const errorKey = errorDiv.dataset.key;
+        if (texts.errors[errorKey]) {
+          errorDiv.textContent = texts.errors[errorKey];
+        }
+      }
+    }
+
+    // 弱口令检测（仅开发环境）
+    function checkWeakPassword() {
+      if ('{{node_env}}' !== 'development') return;
+      
+      const password = document.getElementById('password').value;
+      const warning = document.getElementById('weak-password-warning');
+      
+      if (password.length < 8 || 
+          !/[A-Z]/.test(password) || 
+          !/[a-z]/.test(password) || 
+          !/[0-9]/.test(password)) {
+        warning.style.display = 'block';
+      } else {
+        warning.style.display = 'none';
+      }
+    }
+
+    // 表单提交处理
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+      const form = e.target;
+      const submitBtn = document.getElementById('submit-btn');
+      
+      // 防止重复提交
+      submitBtn.disabled = true;
+      submitBtn.textContent = currentLang === 'zh' ? '登录中...' : 'Signing in...';
+      form.classList.add('loading');
+      
+      // 3秒后恢复按钮（防止长时间加载）
+      setTimeout(() => {
+        submitBtn.disabled = false;
+        submitBtn.textContent = i18n[currentLang].login_button;
+        form.classList.remove('loading');
+      }, 3000);
+    });
+
+    // 密码输入监听
+    document.getElementById('password').addEventListener('input', checkWeakPassword);
+
+    // 初始化
+    updateUI(currentLang);
+  </script>
+</body>
+</html>
