@@ -32,4 +32,9 @@ export const env = {
 
   // Legacy JWT key for backwards compatibility
   jwtPrivateKey: process.env.JWT_PRIVATE_KEY ?? '',
+  
+  // Identity Management
+  mailFrom: process.env.MAIL_FROM ?? 'no-reply@tymoe.local',
+  defaultTenantId: process.env.DEFAULT_TENANT_ID ?? 'tenant-dev',
+  passwordHashRounds: parseInt(process.env.PASSWORD_HASH_ROUNDS ?? '10', 10),
 } as const;

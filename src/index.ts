@@ -5,6 +5,7 @@ import pino from 'pino';
 import pinoHttp from 'pino-http';
 import { env } from './config/env.js';
 import oidcRoutes from './routes/oidc.js';
+import identityRoutes from './routes/identity.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
@@ -37,6 +38,7 @@ app.get('/metrics', async (_req, res) => {
 });
 
 app.use(oidcRoutes);
+app.use(identityRoutes);
 
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error(err);

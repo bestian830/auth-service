@@ -8,12 +8,21 @@ datasource db {
 }
 
 model User {
-  id          String   @id @default(uuid())
-  email       String   @unique
-  password    String   // 简化：直接存明文密码用于演示
-  tenantId    String
-  roles       String[] @default([])
-  createdAt   DateTime @default(now())
+  id                         String   @id @default(uuid())
+  email                      String   @unique
+  // 由明文 password 迁移为哈希
+  passwordHash               String?
+  // 可选：保留 legacy 明文字段，迁移后清空
+  password                   String?  @map("password_legacy")
+  tenantId                   String
+  roles                      String[] @default([])
+  emailVerifiedAt            DateTime?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+  
+  // Relations
+  emailVerificationTokens    EmailVerificationToken[]
+  passwordResetTokens        PasswordResetToken[]
 }
 
 model Client {
@@ -87,6 +96,36 @@ model TenantClient {
   updatedAt          DateTime @updatedAt
 
   @@unique([clientId, tenantId])
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  status    String   @default("pending") // pending | used | expired
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+  
+  user      User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([status, expiresAt])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  status    String   @default("pending") // pending | used | expired
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+  
+  user      User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([status, expiresAt])
 }
 
 model AuditLog {

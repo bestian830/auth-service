@@ -8,6 +8,7 @@ import { validateClientTenantAccess } from '../services/tenant.js';
 import { audit } from '../middleware/audit.js';
 import { importJWK, jwtVerify } from 'jose';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 
 // ===== Discovery =====
 export async function discovery(_req: Request, res: Response){
@@ -56,7 +57,28 @@ export async function postLogin(req: Request, res: Response){
     audit('login_fail', { email, reason: 'user_not_found' });
     return res.status(401).send('Invalid credentials');
   }
-  if (password !== u.password) {
+  
+  let passwordValid = false;
+  
+  // 优先使用 bcrypt hash 验证
+  if (u.passwordHash) {
+    passwordValid = await bcrypt.compare(password, u.passwordHash);
+  } 
+  // 兜底：如果还有 legacy 明文密码且 hash 为空，临时允许并迁移
+  else if (u.password) {
+    passwordValid = (password === u.password);
+    if (passwordValid) {
+      // 自动迁移：将明文密码升级为哈希
+      const hash = await bcrypt.hash(password, 10); // 使用默认轮数
+      await prisma.user.update({
+        where: { id: u.id },
+        data: { passwordHash: hash, password: null }
+      });
+      audit('password_auto_migrated', { userId: u.id, email });
+    }
+  }
+  
+  if (!passwordValid) {
     audit('login_fail', { email, reason: 'invalid_password' });
     return res.status(401).send('Invalid credentials');
   }
