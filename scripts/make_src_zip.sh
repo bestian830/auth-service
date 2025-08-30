@@ -23,11 +23,11 @@ echo "==> Preparing source list..."
 git ls-files > /tmp/filelist.raw
 
 # 过滤黑名单（双保险）
-grep -vE '^(node_modules/|dist/|build/|coverage/|\.turbo/|\.next/|\.git/|\.gitignore|\.DS_Store|Thumbs\.db|__MACOSX/|\.env(\.|$)|.+\.log$|tmp/|\.cache/|.+\.swp$|.+\.tmp$)' \
+grep -vE '^(node_modules/|dist/|build/|coverage/|\.turbo/|\.next/|\.git/|\.gitignore|\.DS_Store|Thumbs\.db|__MACOSX/|\.env\.local|\.env\.development|\.env\.production|\.env\.test|\.env$|.+\.log$|tmp/|\.cache/|.+\.swp$|.+\.tmp$)' \
   /tmp/filelist.raw > /tmp/filelist.filtered
 
 # 必须包含的关键文件兜底检查
-REQUIRED_FILES=(package.json tsconfig.json prisma/schema.prisma zip.md src)
+REQUIRED_FILES=(package.json tsconfig.json prisma/schema.prisma zip.md .env.example src)
 for f in "${REQUIRED_FILES[@]}"; do
   if ! grep -qx "$f" /tmp/filelist.filtered && ! grep -q "^${f}/" /tmp/filelist.filtered; then
     echo "ERROR: required path missing in git index -> $f"
