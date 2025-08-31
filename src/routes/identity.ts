@@ -1,33 +1,70 @@
 import { Router } from 'express';
 import { 
   register, 
-  verifyEmail, 
-  resendVerification, 
+  verify, 
+  login, 
+  logout,
   forgotPassword, 
   resetPassword, 
-  changePassword 
+  getProfile,
+  updateProfile,
+  changePassword,
+  captchaStatus
 } from '../controllers/identity.js';
 import { requireBearer } from '../middleware/bearer.js';
+import { createRateLimiter } from '../middleware/rate.js';
+import { 
+  dualLoginRateLimit, 
+  dualRegistrationRateLimit, 
+  dualPasswordResetRateLimit,
+  markSuccessfulRequest
+} from '../middleware/redisRate.js';
+import { conditionalCaptcha } from '../middleware/captcha.js';
+import { env } from '../config/env.js';
 
 const router = Router();
 
-// 注册新用户
-router.post('/register', register);
+// Rate limiters for identity endpoints using env configuration
+const registerLimiter = createRateLimiter({
+  windowMs: env.rateWindowSec * 1000,
+  max: env.rateMaxRegister,
+  message: { error: 'too_many_requests', detail: 'Registration rate limit exceeded' }
+});
 
-// 邮箱验证（支持 GET 和 POST）
-router.get('/verify', verifyEmail);
-router.post('/verify', verifyEmail);
+const resetLimiter = createRateLimiter({
+  windowMs: env.rateWindowSec * 1000,
+  max: env.rateMaxReset,
+  message: { error: 'too_many_requests', detail: 'Password reset rate limit exceeded' }
+});
 
-// 重发验证邮件
-router.post('/verify/resend', resendVerification);
+const loginLimiter = createRateLimiter({
+  windowMs: env.rateWindowSec * 1000,
+  max: env.rateMaxLogin,
+  message: { error: 'too_many_requests', detail: 'Login rate limit exceeded' }
+});
 
-// 忘记密码
-router.post('/forgot-password', forgotPassword);
+// Identity management endpoints
 
-// 重置密码
+// CAPTCHA status check (before login form)
+router.get('/captcha-status', captchaStatus);
+
+// Registration and verification (enhanced with dual rate limiting)
+router.post('/register', dualRegistrationRateLimit, markSuccessfulRequest, register);
+router.post('/verify', verify);
+
+// Authentication (enhanced with CAPTCHA and dual rate limiting)
+router.post('/login', dualLoginRateLimit, conditionalCaptcha(), markSuccessfulRequest, login);
+router.post('/logout', logout);
+
+// Password reset (enhanced with dual rate limiting)
+router.post('/forgot-password', dualPasswordResetRateLimit, markSuccessfulRequest, forgotPassword);
 router.post('/reset-password', resetPassword);
 
-// 修改密码（需要认证）
+// Profile management (requires authentication)
+router.get('/me', requireBearer, getProfile);
+router.patch('/me', requireBearer, updateProfile);
+
+// Password change (requires authentication)
 router.post('/change-password', requireBearer, changePassword);
 
 export default router;

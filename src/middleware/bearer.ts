@@ -33,25 +33,24 @@ export async function requireBearer(req: Request, res: Response, next: NextFunct
       return res.status(401).json({ error: 'invalid_token' });
     }
 
-    // 计算允许的受众
-    function getAllowedAudiences(): string[] {
-      const list = (process.env.ALLOWED_AUDIENCES || '')
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean);
-      if (list.length) return list;
-      // 兜底：只允许我们自己的前缀
-      return [env.defaultAudPrefix || 'tymoe-service'];
-    }
-
-    // 使用jose验证JWT，增加issuer和audience校验
+    // 使用jose验证JWT，仅校验签名和issuer
     const publicKey = await importJWK(keyRecord.publicJwk as any, 'RS256');
     const { payload: claims } = await jwtVerify(token, publicKey, {
       algorithms: ['RS256'],
       issuer: env.issuerUrl.replace(/\/+$/, ''),   // 规范化，去掉尾斜杠
-      audience: getAllowedAudiences(),            // 限制 aud
-      clockTolerance: 30                          // ✅ 30 秒时钟容错
+      clockTolerance: 30                          // 30 秒时钟容错
     });
+
+    // 手动校验audience前缀（避免误杀）
+    const aud = claims.aud;
+    if (aud && !Array.isArray(aud) && typeof aud === 'string') {
+      const allowedPrefixes = env.allowedAudiences.split(',').map(s => s.trim()).filter(Boolean);
+      const hasValidPrefix = allowedPrefixes.some(prefix => aud.startsWith(prefix));
+      
+      if (!hasValidPrefix) {
+        return res.status(401).json({ error: 'invalid_audience' });
+      }
+    }
     
     (req as any).claims = claims;
     next();

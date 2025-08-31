@@ -1,310 +1,671 @@
 import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
 import { prisma } from '../infra/prisma.js';
 import { env } from '../config/env.js';
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
-import { sendMailDev } from '../services/mailer.js';
 import { audit } from '../middleware/audit.js';
+import { IdentityService } from '../services/identity.js';
+import { revokeFamily } from '../services/token.js';
+import { createRateLimiter, isRedisConnected } from '../infra/redis.js';
+import { verifyCaptcha } from '../middleware/captcha.js';
 
-function minutesFromNow(mins: number) { 
-  return new Date(Date.now() + mins * 60 * 1000); 
-}
-
-function buildUrl(base: string, path: string, params: Record<string, string>) {
-  const u = new URL(path, base);
-  for (const [k, v] of Object.entries(params)) {
-    u.searchParams.set(k, v);
-  }
-  return u.toString();
-}
+const identityService = new IdentityService();
 
 export async function register(req: Request, res: Response) {
-  // TODO: 速率限制
-  const { email, password, tenant_id } = req.body ?? {};
-  
-  // 基本入参校验
-  if (!email || !password) {
-    audit('register_invalid_request', { ip: req.ip });
-    return res.status(400).json({ error: 'invalid_request' });
-  }
-  
-  // 简单邮箱格式验证
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    audit('register_invalid_email', { email, ip: req.ip });
-    return res.status(400).json({ error: 'invalid_email' });
-  }
-  
+  const { email, password, subdomain, phone, address } = req.body;
+
+  // Always return success to prevent enumeration attacks
+  const sendSuccessResponse = () => res.json({ ok: true });
+
   try {
-    const exists = await prisma.user.findUnique({ where: { email } });
-    if (exists) {
-      // 不暴露用户存在性
-      audit('register_conflict', { email, ip: req.ip });
-      return res.status(200).json({ ok: true });
+    if (!email || !password) {
+      audit('register_invalid_request', { ip: req.ip, email: email || 'missing' });
+      return sendSuccessResponse();
     }
-    
-    const hash = await bcrypt.hash(password, env.passwordHashRounds);
-    const user = await prisma.user.create({
-      data: {
-        email,
-        passwordHash: hash,
-        tenantId: tenant_id || env.defaultTenantId,
-        roles: ['user'],
-      }
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email }
     });
-    
-    // 发邮箱验证
-    const token = crypto.randomUUID();
-    await prisma.emailVerificationToken.create({
-      data: {
-        userId: user.id,
-        token,
-        expiresAt: minutesFromNow(30),
-      }
+
+    if (existingUser && existingUser.emailVerifiedAt) {
+      // User exists and verified - audit but don't send email
+      audit('register_conflict', { ip: req.ip, email, verified: true });
+      return sendSuccessResponse();
+    }
+
+    // Create or reuse user and send verification email
+    const { user } = await identityService.createOrReuseUserForSignup({
+      email,
+      password,
+      tenantId: env.defaultTenantId,
+      subdomain,
+      phone,
+      address
     });
-    
-    const url = buildUrl(env.issuerUrl, '/verify', { token });
-    await sendMailDev(user.email, 'Verify your email', `点击验证：<a href="${url}">${url}</a>`);
-    
-    audit('register', { userId: user.id, tenantId: user.tenantId, ip: req.ip });
-    return res.json({ ok: true });
-    
-  } catch (error) {
-    audit('register_error', { email, error: error instanceof Error ? error.message : String(error), ip: req.ip });
+
+    await identityService.issueEmailVerification(
+      user.id,
+      'signup',
+      email,
+      user.tenantId
+    );
+
+    audit('register_requested', { 
+      ip: req.ip, 
+      email, 
+      userId: user.id,
+      tenantId: user.tenantId
+    });
+
+    return sendSuccessResponse();
+  } catch (error: any) {
+    if (error.message === 'subdomain_taken') {
+      audit('register_subdomain_conflict', { ip: req.ip, email, subdomain });
+      return res.status(409).json({ error: 'subdomain_taken' });
+    }
+
+    audit('register_error', { ip: req.ip, email, error: error.message });
     return res.status(500).json({ error: 'server_error' });
   }
 }
 
-export async function verifyEmail(req: Request, res: Response) {
-  // 支持 GET/POST，GET 用于点击链接
-  const token = (req.method === 'GET' ? req.query.token : req.body?.token) as string | undefined;
-  
-  if (!token) {
-    audit('verify_invalid_request', { ip: req.ip });
-    return res.status(400).json({ error: 'invalid_request' });
-  }
-  
+export async function verify(req: Request, res: Response) {
+  const { email, code } = req.body;
+
   try {
-    const t = await prisma.emailVerificationToken.findUnique({ 
-      where: { token },
-      include: { user: true }
+    if (!email || !code) {
+      audit('verify_invalid_request', { ip: req.ip, email: email || 'missing' });
+      return res.status(400).json({ error: 'invalid_request' });
+    }
+
+    // Parse code (selector.token format)
+    const codeParts = code.split('.');
+    if (codeParts.length !== 2) {
+      audit('verify_invalid_format', { ip: req.ip, email });
+      return res.status(400).json({ error: 'invalid_code' });
+    }
+
+    const [selector, token] = codeParts;
+    
+    const user = await identityService.consumeEmailVerification(selector, token);
+
+    audit('email_verified', { 
+      ip: req.ip, 
+      email, 
+      userId: user.id 
     });
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    const errorMap: Record<string, { status: number; error: string }> = {
+      'invalid_code': { status: 400, error: 'invalid_code' },
+      'code_already_used': { status: 400, error: 'code_already_used' },
+      'code_expired': { status: 400, error: 'code_expired' },
+      'too_many_attempts': { status: 429, error: 'too_many_attempts' }
+    };
+
+    const errorInfo = errorMap[error.message] || { status: 500, error: 'server_error' };
     
-    if (!t || t.status !== 'pending' || t.expiresAt < new Date()) {
-      audit('verify_fail', { token, ip: req.ip });
-      return res.status(400).json({ error: 'invalid_token' });
-    }
-    
-    await prisma.$transaction([
-      prisma.user.update({ 
-        where: { id: t.userId }, 
-        data: { emailVerifiedAt: new Date() }
-      }),
-      prisma.emailVerificationToken.update({ 
-        where: { token }, 
-        data: { status: 'used', usedAt: new Date() }
-      })
-    ]);
-    
-    audit('verify_success', { userId: t.userId, email: t.user.email, ip: req.ip });
-    
-    // GET 返回简单 HTML，POST 返回 JSON
-    if (req.method === 'GET') { 
-      return res.type('html').send('<h1>邮箱已验证</h1><p>您的邮箱已成功验证！</p>'); 
-    }
-    return res.json({ ok: true });
-    
-  } catch (error) {
-    audit('verify_error', { token, error: error instanceof Error ? error.message : String(error), ip: req.ip });
-    return res.status(500).json({ error: 'server_error' });
+    audit('verify_failed', { 
+      ip: req.ip, 
+      email, 
+      reason: error.message 
+    });
+
+    res.status(errorInfo.status).json({ error: errorInfo.error });
   }
 }
 
-export async function resendVerification(req: Request, res: Response) {
-  // TODO: 速率限制
-  const { email } = req.body ?? {};
-  
-  if (!email) {
-    audit('resend_verify_invalid_request', { ip: req.ip });
-    return res.status(400).json({ error: 'invalid_request' });
-  }
-  
+export async function login(req: Request, res: Response) {
+  const { email, password, captcha } = req.body;
+  const ip = req.ip || 'unknown';
+  const userAgent = req.get('User-Agent') || 'unknown';
+
   try {
-    const u = await prisma.user.findUnique({ where: { email } });
-    if (!u) {
-      // 不暴露存在性
-      audit('resend_verify_not_found', { email, ip: req.ip });
-      return res.json({ ok: true }); 
+    if (!email || !password) {
+      audit('login_invalid_request', { ip, email: email || 'missing' });
+      return res.status(400).json({ error: 'invalid_request' });
     }
-    
-    if (u.emailVerifiedAt) {
-      audit('resend_verify_already_verified', { userId: u.id, email, ip: req.ip });
-      return res.json({ ok: true });
+
+    // Check for user existence first
+    const user = await prisma.user.findUnique({
+      where: { email }
+    });
+
+    // Always record login attempt for tracking
+    const loginAttemptData: {
+      userId?: string;
+      email: any;
+      tenantId: string;
+      ipAddress: string;
+      userAgent: string;
+      success: boolean;
+      failureReason: string | null;
+      captchaUsed: boolean;
+    } = {
+      email,
+      tenantId: user?.tenantId || env.defaultTenantId,
+      ipAddress: ip,
+      userAgent,
+      success: false,
+      failureReason: null,
+      captchaUsed: !!captcha
+    };
+
+    // Check account lock status if user exists and Redis is available
+    if (user && isRedisConnected()) {
+      try {
+        const rateLimiter = await createRateLimiter();
+        const lockStatus = await rateLimiter.isUserLocked(user.id);
+        
+        if (lockStatus.locked) {
+          loginAttemptData.failureReason = 'account_locked';
+          await prisma.loginAttempt.create({
+            data: { ...loginAttemptData, userId: user.id }
+          });
+          
+          audit('login_fail', { 
+            ip, 
+            email, 
+            userId: user.id, 
+            reason: 'account_locked',
+            lockReason: lockStatus.reason,
+            lockUntil: lockStatus.until
+          });
+          
+          return res.status(423).json({ 
+            error: 'account_locked', 
+            locked_until: lockStatus.until,
+            reason: lockStatus.reason
+          });
+        }
+
+        // Check if CAPTCHA is required based on failure count
+        const failureCount = await rateLimiter.getLoginFailureCount(user.id);
+        if (env.captchaEnabled && failureCount >= env.loginCaptchaThreshold) {
+          if (!captcha) {
+            loginAttemptData.failureReason = 'captcha_required';
+            await prisma.loginAttempt.create({
+              data: { ...loginAttemptData, userId: user.id }
+            });
+            
+            audit('login_fail', { 
+              ip, 
+              email, 
+              userId: user.id, 
+              reason: 'captcha_required',
+              failureCount
+            });
+            
+            return res.status(400).json({ 
+              error: 'captcha_required',
+              failure_count: failureCount,
+              captcha_site_key: env.captchaSiteKey
+            });
+          }
+
+          // Verify CAPTCHA
+          const captchaValid = await verifyCaptcha(captcha, ip);
+          if (!captchaValid) {
+            loginAttemptData.failureReason = 'captcha_failed';
+            await prisma.loginAttempt.create({
+              data: { ...loginAttemptData, userId: user.id }
+            });
+            
+            audit('login_fail', { 
+              ip, 
+              email, 
+              userId: user.id, 
+              reason: 'captcha_failed',
+              failureCount
+            });
+            
+            return res.status(400).json({ 
+              error: 'captcha_invalid'
+            });
+          }
+        }
+      } catch (redisError) {
+        console.error('Redis error during login check:', redisError);
+        // Continue without Redis-based checks
+      }
     }
+
+    // Check user existence and verification
+    if (!user || !user.emailVerifiedAt) {
+      loginAttemptData.failureReason = 'user_not_found_or_unverified';
+      await prisma.loginAttempt.create({ data: loginAttemptData });
+      
+      audit('login_fail', { ip, email, reason: 'user_not_found_or_unverified' });
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    // Check database-level user lock (fallback if Redis is unavailable)
+    const now = new Date();
+    if (user.lockedUntil && user.lockedUntil > now) {
+      loginAttemptData.failureReason = 'account_locked';
+      loginAttemptData.userId = user.id;
+      await prisma.loginAttempt.create({ data: loginAttemptData });
+      
+      audit('login_fail', { 
+        ip, 
+        email, 
+        userId: user.id, 
+        reason: 'account_locked_db',
+        lockUntil: user.lockedUntil.getTime(),
+        lockReason: user.lockReason
+      });
+      
+      return res.status(423).json({ 
+        error: 'account_locked',
+        locked_until: user.lockedUntil.getTime(),
+        reason: user.lockReason
+      });
+    }
+
+    // Validate password
+    const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+    if (!isValidPassword) {
+      loginAttemptData.failureReason = 'invalid_password';
+      loginAttemptData.userId = user.id;
+      await prisma.loginAttempt.create({ data: loginAttemptData });
+      
+      // Increment failure tracking
+      if (isRedisConnected()) {
+        try {
+          const rateLimiter = await createRateLimiter();
+          const failureCount = await rateLimiter.incrementLoginFailures(user.id);
+          
+          // Update database failure count
+          await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              loginFailureCount: failureCount,
+              lastLoginFailureAt: now
+            }
+          });
+          
+          // Lock account if max failures reached
+          if (failureCount >= env.loginMaxFailures) {
+            const lockDurationMs = env.loginLockoutDurationSec * 1000;
+            await rateLimiter.lockUser(user.id, lockDurationMs, 'max_failures');
+            
+            // Also update database
+            await prisma.user.update({
+              where: { id: user.id },
+              data: {
+                lockedUntil: new Date(now.getTime() + lockDurationMs),
+                lockReason: 'max_failures'
+              }
+            });
+            
+            audit('user_locked', {
+              ip,
+              userId: user.id,
+              email,
+              reason: 'max_failures',
+              failureCount,
+              lockDuration: env.loginLockoutDurationSec
+            });
+          }
+        } catch (redisError) {
+          console.error('Redis error during failure tracking:', redisError);
+        }
+      }
+      
+      audit('login_fail', { ip, email, userId: user.id, reason: 'invalid_password' });
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    // Successful login - reset failure counters
+    loginAttemptData.success = true;
+    loginAttemptData.userId = user.id;
+    await prisma.loginAttempt.create({ data: loginAttemptData });
+
+    if (isRedisConnected()) {
+      try {
+        const rateLimiter = await createRateLimiter();
+        await rateLimiter.resetLoginFailures(user.id);
+        await rateLimiter.unlockUser(user.id);
+      } catch (redisError) {
+        console.error('Redis error during success cleanup:', redisError);
+      }
+    }
+
+    // Reset database failure tracking
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        loginFailureCount: 0,
+        lastLoginFailureAt: null,
+        lockedUntil: null,
+        lockReason: null
+      }
+    });
+
+    // Store user info in session for OIDC flow
+    req.session = req.session || {};
+    req.session.userId = user.id;
+    req.session.tenantId = user.tenantId;
+    req.session.email = user.email;
+    req.session.roles = user.roles;
     
-    // 使旧令牌失效
-    await prisma.emailVerificationToken.updateMany({
-      where: { userId: u.id, status: 'pending' },
-      data: { status: 'expired' }
+    audit('login_success', { 
+      ip, 
+      email, 
+      userId: user.id, 
+      tenantId: user.tenantId,
+      captchaUsed: !!captcha
     });
     
-    const token = crypto.randomUUID();
-    await prisma.emailVerificationToken.create({
-      data: { userId: u.id, token, expiresAt: minutesFromNow(30) }
+    res.json({ ok: true });
+  } catch (error: any) {
+    audit('login_error', { ip, email, error: error.message });
+    res.status(500).json({ error: 'server_error' });
+  }
+}
+
+// New endpoint to check if CAPTCHA is required for a user
+export async function captchaStatus(req: Request, res: Response) {
+  const { email } = req.query;
+  const ip = req.ip || 'unknown';
+
+  try {
+    if (!email || typeof email !== 'string') {
+      return res.json({
+        captcha_required: false,
+        captcha_site_key: null,
+        threshold: env.loginCaptchaThreshold
+      });
+    }
+
+    let captchaRequired = false;
+    
+    if (env.captchaEnabled && isRedisConnected()) {
+      try {
+        const user = await prisma.user.findUnique({
+          where: { email },
+          select: { id: true }
+        });
+
+        if (user) {
+          const rateLimiter = await createRateLimiter();
+          const failureCount = await rateLimiter.getLoginFailureCount(user.id);
+          captchaRequired = failureCount >= env.loginCaptchaThreshold;
+        }
+      } catch (redisError) {
+        console.error('Redis error during CAPTCHA status check:', redisError);
+      }
+    }
+
+    audit('captcha_status_check', {
+      ip,
+      email,
+      captchaRequired
+    });
+
+    res.json({
+      captcha_required: captchaRequired,
+      captcha_site_key: env.captchaEnabled ? env.captchaSiteKey : null,
+      threshold: env.loginCaptchaThreshold
+    });
+  } catch (error: any) {
+    console.error('CAPTCHA status error:', error);
+    audit('captcha_status_error', {
+      ip,
+      email: email as string,
+      error: error.message
     });
     
-    const url = buildUrl(env.issuerUrl, '/verify', { token });
-    await sendMailDev(u.email, 'Verify your email', `点击验证：<a href="${url}">${url}</a>`);
-    
-    audit('verify_resend', { userId: u.id, email, ip: req.ip });
-    return res.json({ ok: true });
-    
-  } catch (error) {
-    audit('resend_verify_error', { email, error: error instanceof Error ? error.message : String(error), ip: req.ip });
-    return res.status(500).json({ error: 'server_error' });
+    res.json({
+      captcha_required: false,
+      captcha_site_key: null,
+      threshold: env.loginCaptchaThreshold
+    });
+  }
+}
+
+export async function logout(req: Request, res: Response) {
+  try {
+    const session = req.session;
+    const userId = session?.userId;
+
+    if (userId) {
+      // Get all active refresh tokens for this user
+      const userTokens = await prisma.refreshToken.findMany({
+        where: {
+          subjectUserId: userId,
+          status: 'active'
+        },
+        select: { familyId: true }
+      });
+
+      // Revoke all refresh token families for this user (using service layer)
+      const uniqueFamilies = [...new Set(userTokens.map(t => t.familyId))];
+      for (const familyId of uniqueFamilies) {
+        // Use the token service's revokeFamily function for consistency
+        await revokeFamily(familyId, 'logout');
+      }
+
+      audit('logout', { 
+        ip: req.ip, 
+        userId,
+        revokedFamilies: uniqueFamilies.length
+      });
+    }
+
+    // Clear session/cookies
+    req.session = null;
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    audit('logout_error', { ip: req.ip, error: error.message });
+    res.status(500).json({ error: 'server_error' });
   }
 }
 
 export async function forgotPassword(req: Request, res: Response) {
-  // TODO: 速率限制
-  const { email } = req.body ?? {};
-  
-  if (!email) {
-    audit('forgot_password_invalid_request', { ip: req.ip });
-    return res.status(400).json({ error: 'invalid_request' });
-  }
-  
+  const { email } = req.body;
+
+  // Always return success to prevent enumeration
+  const sendSuccessResponse = () => res.json({ ok: true });
+
   try {
-    const u = await prisma.user.findUnique({ where: { email } });
-    
-    // 统一响应，不暴露存在性
-    if (!u) { 
-      audit('forgot_password_not_found', { email, ip: req.ip });
-      return res.json({ ok: true }); 
+    if (!email) {
+      audit('reset_invalid_request', { ip: req.ip });
+      return sendSuccessResponse();
     }
-    
-    // 使旧重置令牌失效
-    await prisma.passwordResetToken.updateMany({
-      where: { userId: u.id, status: 'pending' },
-      data: { status: 'expired' }
+
+    const user = await prisma.user.findUnique({
+      where: { email }
     });
-    
-    const token = crypto.randomUUID();
-    await prisma.passwordResetToken.create({
-      data: { userId: u.id, token, expiresAt: minutesFromNow(30) }
+
+    if (!user || !user.emailVerifiedAt) {
+      // User doesn't exist or not verified - audit but still return success
+      audit('reset_requested_nonexistent', { ip: req.ip, email });
+      return sendSuccessResponse();
+    }
+
+    await identityService.issuePasswordReset(user.id, email, user.tenantId);
+
+    audit('reset_requested', { 
+      ip: req.ip, 
+      email, 
+      userId: user.id 
     });
-    
-    const url = buildUrl(env.issuerUrl, '/reset-password', { token });
-    await sendMailDev(u.email, 'Reset your password', `重置链接：<a href="${url}">${url}</a>`);
-    
-    audit('forgot_password', { userId: u.id, email, ip: req.ip });
-    return res.json({ ok: true });
-    
-  } catch (error) {
-    audit('forgot_password_error', { email, error: error instanceof Error ? error.message : String(error), ip: req.ip });
-    return res.status(500).json({ error: 'server_error' });
+
+    return sendSuccessResponse();
+  } catch (error: any) {
+    audit('reset_error', { ip: req.ip, email, error: error.message });
+    return sendSuccessResponse(); // Still return success to prevent info disclosure
   }
 }
 
 export async function resetPassword(req: Request, res: Response) {
-  const { token, new_password } = req.body ?? {};
-  
-  if (!token || !new_password) {
-    audit('reset_password_invalid_request', { ip: req.ip });
-    return res.status(400).json({ error: 'invalid_request' });
-  }
-  
-  // 基本密码长度检查
-  if (new_password.length < 6) {
-    audit('reset_password_weak', { token, ip: req.ip });
-    return res.status(400).json({ error: 'password_too_short' });
-  }
-  
+  const { selector, token, password } = req.body;
+
   try {
-    const t = await prisma.passwordResetToken.findUnique({ 
-      where: { token },
-      include: { user: true }
-    });
-    
-    if (!t || t.status !== 'pending' || t.expiresAt < new Date()) {
-      audit('reset_password_fail', { token, ip: req.ip });
-      return res.status(400).json({ error: 'invalid_token' });
+    if (!selector || !token || !password) {
+      audit('password_reset_invalid_request', { ip: req.ip });
+      return res.status(400).json({ error: 'invalid_request' });
     }
+
+    const user = await identityService.consumePasswordReset(selector, token, password);
+
+    audit('password_reset', { 
+      ip: req.ip, 
+      userId: user.id 
+    });
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    const errorMap: Record<string, { status: number; error: string }> = {
+      'invalid_code': { status: 400, error: 'invalid_code' },
+      'code_already_used': { status: 400, error: 'code_already_used' },
+      'code_expired': { status: 400, error: 'code_expired' },
+      'too_many_attempts': { status: 429, error: 'too_many_attempts' }
+    };
+
+    const errorInfo = errorMap[error.message] || { status: 500, error: 'server_error' };
     
-    const hash = await bcrypt.hash(new_password, env.passwordHashRounds);
-    await prisma.$transaction([
-      prisma.user.update({ 
-        where: { id: t.userId }, 
-        data: { passwordHash: hash }
-      }),
-      prisma.passwordResetToken.update({ 
-        where: { token }, 
-        data: { status: 'used', usedAt: new Date() }
-      })
-    ]);
-    
-    audit('reset_password_success', { userId: t.userId, email: t.user.email, ip: req.ip });
-    return res.json({ ok: true });
-    
-  } catch (error) {
-    audit('reset_password_error', { token, error: error instanceof Error ? error.message : String(error), ip: req.ip });
-    return res.status(500).json({ error: 'server_error' });
+    audit('password_reset_failed', { 
+      ip: req.ip, 
+      reason: error.message 
+    });
+
+    res.status(errorInfo.status).json({ error: errorInfo.error });
   }
 }
 
-// 需要 Bearer（已实现）保护
-export async function changePassword(req: Request, res: Response) {
-  // claims 注入自 requireBearer
-  const claims = (req as any).claims;
-  if (!claims?.sub) {
-    audit('change_password_unauthorized', { ip: req.ip });
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  
-  const { current_password, new_password } = req.body ?? {};
-  
-  if (!current_password || !new_password) {
-    audit('change_password_invalid_request', { userId: claims.sub, ip: req.ip });
-    return res.status(400).json({ error: 'invalid_request' });
-  }
-  
-  // 基本密码长度检查
-  if (new_password.length < 6) {
-    audit('change_password_weak', { userId: claims.sub, ip: req.ip });
-    return res.status(400).json({ error: 'password_too_short' });
-  }
-  
+export async function getProfile(req: Request, res: Response) {
   try {
-    const u = await prisma.user.findUnique({ where: { id: claims.sub } });
-    if (!u?.passwordHash) {
-      audit('change_password_no_hash', { userId: claims.sub, ip: req.ip });
+    const userId = (req as any).claims?.sub;
+    if (!userId) {
       return res.status(401).json({ error: 'unauthorized' });
     }
-    
-    const ok = await bcrypt.compare(current_password, u.passwordHash);
-    if (!ok) {
-      audit('change_password_wrong_current', { userId: claims.sub, email: u.email, ip: req.ip });
-      return res.status(401).json({ error: 'invalid_current_password' });
-    }
-    
-    // 检查新密码是否与当前密码相同
-    const samePassword = await bcrypt.compare(new_password, u.passwordHash);
-    if (samePassword) {
-      audit('change_password_same', { userId: claims.sub, email: u.email, ip: req.ip });
-      return res.status(400).json({ error: 'password_unchanged' });
-    }
-    
-    const hash = await bcrypt.hash(new_password, env.passwordHashRounds);
-    await prisma.user.update({ 
-      where: { id: u.id }, 
-      data: { passwordHash: hash }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        subdomain: true,
+        phone: true,
+        address: true,
+        storeType: true,
+        emailVerifiedAt: true,
+        createdAt: true,
+        roles: true
+      }
     });
+
+    if (!user) {
+      return res.status(404).json({ error: 'user_not_found' });
+    }
+
+    res.json(user);
+  } catch (error: any) {
+    audit('profile_fetch_error', { 
+      ip: req.ip, 
+      userId: (req as any).claims?.sub, 
+      error: error.message 
+    });
+    res.status(500).json({ error: 'server_error' });
+  }
+}
+
+export async function updateProfile(req: Request, res: Response) {
+  try {
+    const userId = (req as any).claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    const { email, subdomain, phone, address } = req.body;
     
-    audit('change_password', { userId: u.id, email: u.email, ip: req.ip });
-    return res.json({ ok: true });
+    const updatedUser = await identityService.updateUserProfile(userId, {
+      email,
+      subdomain,
+      phone,
+      address
+    });
+
+    audit('profile_updated', { 
+      ip: req.ip, 
+      userId,
+      changes: { email, subdomain, phone: !!phone, address: !!address }
+    });
+
+    // Return updated profile (excluding sensitive fields)
+    const profile = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        subdomain: true,
+        phone: true,
+        address: true,
+        storeType: true,
+        emailVerifiedAt: true,
+        createdAt: true,
+        roles: true
+      }
+    });
+
+    res.json(profile);
+  } catch (error: any) {
+    const errorMap: Record<string, { status: number; error: string }> = {
+      'email_taken': { status: 409, error: 'email_taken' },
+      'subdomain_taken': { status: 409, error: 'subdomain_taken' }
+    };
+
+    const errorInfo = errorMap[error.message] || { status: 500, error: 'server_error' };
     
-  } catch (error) {
-    audit('change_password_error', { userId: claims.sub, error: error instanceof Error ? error.message : String(error), ip: req.ip });
-    return res.status(500).json({ error: 'server_error' });
+    audit('profile_update_failed', { 
+      ip: req.ip, 
+      userId: (req as any).claims?.sub,
+      reason: error.message 
+    });
+
+    res.status(errorInfo.status).json({ error: errorInfo.error });
+  }
+}
+
+export async function changePassword(req: Request, res: Response) {
+  try {
+    const userId = (req as any).claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      audit('change_password_invalid_request', { ip: req.ip, userId });
+      return res.status(400).json({ error: 'invalid_request' });
+    }
+
+    await identityService.changePassword(userId, currentPassword, newPassword);
+
+    audit('password_changed', { 
+      ip: req.ip, 
+      userId 
+    });
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    const errorMap: Record<string, { status: number; error: string }> = {
+      'user_not_found': { status: 404, error: 'user_not_found' },
+      'invalid_current_password': { status: 400, error: 'invalid_current_password' }
+    };
+
+    const errorInfo = errorMap[error.message] || { status: 500, error: 'server_error' };
+    
+    audit('change_password_failed', { 
+      ip: req.ip, 
+      userId: (req as any).claims?.sub,
+      reason: error.message 
+    });
+
+    res.status(errorInfo.status).json({ error: errorInfo.error });
   }
 }

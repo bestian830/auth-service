@@ -148,3 +148,94 @@ export async function revokeFamilyByOldReuse(oldId: string){
   if (!old) return;
   await prisma.refreshToken.updateMany({ where: { familyId: old.familyId }, data: { status: 'revoked', revokedAt: new Date(), revokeReason: 'reuse_detected' }});
 }
+
+export async function revokeFamily(familyId: string, reason: string){
+  await prisma.refreshToken.updateMany({ 
+    where: { familyId }, 
+    data: { 
+      status: 'revoked', 
+      revokedAt: new Date(), 
+      revokeReason: reason 
+    }
+  });
+}
+
+// v0.2.6: Revoke all refresh token families for a specific user
+export async function revokeAllUserTokens(userId: string, reason: string): Promise<{
+  revokedFamilies: number;
+  revokedTokens: number;
+}> {
+  // Get all active token families for this user
+  const activeTokens = await prisma.refreshToken.findMany({
+    where: {
+      subjectUserId: userId,
+      status: 'active'
+    },
+    select: { familyId: true }
+  });
+
+  // Get unique family IDs
+  const uniqueFamilies = [...new Set(activeTokens.map(t => t.familyId))];
+  
+  if (uniqueFamilies.length === 0) {
+    return { revokedFamilies: 0, revokedTokens: 0 };
+  }
+
+  // Revoke all tokens for these families
+  const result = await prisma.refreshToken.updateMany({
+    where: {
+      familyId: { in: uniqueFamilies },
+      status: 'active'
+    },
+    data: {
+      status: 'revoked',
+      revokedAt: new Date(),
+      revokeReason: reason
+    }
+  });
+
+  return {
+    revokedFamilies: uniqueFamilies.length,
+    revokedTokens: result.count
+  };
+}
+
+// v0.2.6: Revoke user tokens across all tenants and clients
+export async function revokeUserTokensGlobally(userId: string, reason: string): Promise<{
+  revokedFamilies: number;
+  revokedTokens: number;
+}> {
+  // Get all active tokens for this user regardless of client/tenant
+  const activeTokens = await prisma.refreshToken.findMany({
+    where: {
+      subjectUserId: userId,
+      status: { in: ['active', 'rotated'] } // Include rotated tokens to fully invalidate families
+    },
+    select: { familyId: true }
+  });
+
+  // Get unique family IDs
+  const uniqueFamilies = [...new Set(activeTokens.map(t => t.familyId))];
+  
+  if (uniqueFamilies.length === 0) {
+    return { revokedFamilies: 0, revokedTokens: 0 };
+  }
+
+  // Revoke all tokens in these families
+  const result = await prisma.refreshToken.updateMany({
+    where: {
+      familyId: { in: uniqueFamilies },
+      status: { in: ['active', 'rotated'] }
+    },
+    data: {
+      status: 'revoked',
+      revokedAt: new Date(),
+      revokeReason: reason
+    }
+  });
+
+  return {
+    revokedFamilies: uniqueFamilies.length,
+    revokedTokens: result.count
+  };
+}

@@ -34,7 +34,65 @@ export const env = {
   jwtPrivateKey: process.env.JWT_PRIVATE_KEY ?? '',
   
   // Identity Management
-  mailFrom: process.env.MAIL_FROM ?? 'no-reply@tymoe.local',
   defaultTenantId: process.env.DEFAULT_TENANT_ID ?? 'tenant-dev',
   passwordHashRounds: parseInt(process.env.PASSWORD_HASH_ROUNDS ?? '10', 10),
+
+  // Email configuration
+  mailTransport: process.env.MAIL_TRANSPORT ?? 'CONSOLE',
+  smtpHost: process.env.SMTP_HOST ?? 'smtp.example.com',
+  smtpPort: Number(process.env.SMTP_PORT ?? '587'),
+  smtpSecure: process.env.SMTP_SECURE === 'true',
+  smtpUser: process.env.SMTP_USER ?? '',
+  smtpPass: process.env.SMTP_PASS ?? '',
+  mailFrom: process.env.MAIL_FROM ?? 'Tymoe Auth <no-reply@tymoe.com>',
+
+  // Verification and reset tokens
+  signupCodeTtlSec: Number(process.env.SIGNUP_CODE_TTL_SEC ?? '900'),
+  resetCodeTtlSec: Number(process.env.RESET_CODE_TTL_SEC ?? '900'),
+  codeAttemptMax: Number(process.env.CODE_ATTEMPT_MAX ?? '5'),
+
+  // Rate limiting for identity endpoints
+  rateWindowSec: Number(process.env.RATE_WINDOW_SEC ?? '60'),
+  rateMaxLogin: Number(process.env.RATE_MAX_LOGIN ?? '5'),
+  rateMaxRegister: Number(process.env.RATE_MAX_REGISTER ?? '5'),
+  rateMaxReset: Number(process.env.RATE_MAX_RESET ?? '5'),
+
+  // Audience validation
+  allowedAudiences: process.env.ALLOWED_AUDIENCES ?? 'tymoe-service',
+
+  // v0.2.6 Redis Configuration
+  redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  redisPassword: process.env.REDIS_PASSWORD ?? '',
+  redisDb: Number(process.env.REDIS_DB ?? '0'),
+  redisConnectTimeout: Number(process.env.REDIS_CONNECT_TIMEOUT ?? '5000'),
+  redisCommandTimeout: Number(process.env.REDIS_COMMAND_TIMEOUT ?? '3000'),
+  redisMaxRetries: Number(process.env.REDIS_MAX_RETRIES ?? '3'),
+
+  // v0.2.6 Enhanced SMTP
+  smtpAuthUser: process.env.SMTP_AUTH_USER ?? process.env.SMTP_USER ?? '',
+  smtpAuthPass: process.env.SMTP_AUTH_PASS ?? process.env.SMTP_PASS ?? '',
+  mailReplyTo: process.env.MAIL_REPLY_TO ?? '',
+
+  // v0.2.6 Verification code reuse
+  verificationCodeReuseWindowSec: Number(process.env.VERIFICATION_CODE_REUSE_WINDOW_SEC ?? '600'),
+
+  // v0.2.6 Dual-dimension rate limiting
+  rateLoginEmailMax: Number(process.env.RATE_LOGIN_EMAIL_MAX ?? '10'),
+  rateLoginEmailWindowSec: Number(process.env.RATE_LOGIN_EMAIL_WINDOW_SEC ?? '3600'),
+  rateLoginIpMax: Number(process.env.RATE_LOGIN_IP_MAX ?? '50'),
+  rateLoginIpWindowSec: Number(process.env.RATE_LOGIN_IP_WINDOW_SEC ?? '3600'),
+
+  // v0.2.6 Login failure tracking and lockout
+  loginMaxFailures: Number(process.env.LOGIN_MAX_FAILURES ?? '10'),
+  loginLockoutDurationSec: Number(process.env.LOGIN_LOCKOUT_DURATION_SEC ?? '1800'),
+  loginCaptchaThreshold: Number(process.env.LOGIN_CAPTCHA_THRESHOLD ?? '3'),
+  captchaEnabled: process.env.CAPTCHA_ENABLED === 'true',
+
+  // v0.2.6 CAPTCHA Configuration
+  captchaSiteKey: process.env.CAPTCHA_SITE_KEY ?? '',
+  captchaSecretKey: process.env.CAPTCHA_SECRET_KEY ?? '',
+  captchaVerifyUrl: process.env.CAPTCHA_VERIFY_URL ?? 'https://www.google.com/recaptcha/api/siteverify',
+
+  // v0.2.6 Enhanced audit logging
+  enhancedAuditLogging: process.env.ENHANCED_AUDIT_LOGGING === 'true',
 } as const;

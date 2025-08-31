@@ -9,26 +9,39 @@ datasource db {
 
 model User {
   id                         String   @id @default(uuid())
-  email                      String   @unique
-  // 由明文 password 迁移为哈希
-  passwordHash               String?
-  // 可选：保留 legacy 明文字段，迁移后清空
-  password                   String?  @map("password_legacy")
   tenantId                   String
-  roles                      String[] @default([])
+  email                      String   @unique
+  passwordHash               String
+  // 可选资料
+  phone                      String?  @db.VarChar(32)
+  address                    String?  @db.VarChar(255)
+  subdomain                  String?  @unique
+  // 业务类型（仅管理员可改）
+  storeType                  StoreType @default(UNKNOWN)
+  
+  // 账号状态
   emailVerifiedAt            DateTime?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
   
+  // v0.2.6 Login failure tracking and lockout
+  loginFailureCount          Int      @default(0)
+  lastLoginFailureAt         DateTime?
+  lockedUntil                DateTime?
+  lockReason                 String?  // "max_failures" | "security_violation"
+  
+  roles                      String[] @default([])
+  
   // Relations
-  emailVerificationTokens    EmailVerificationToken[]
-  passwordResetTokens        PasswordResetToken[]
+  emailVerifications         EmailVerification[]
+  passwordResets             PasswordReset[]
+  loginAttempts              LoginAttempt[]
 }
 
 model Client {
   id           String   @id       // client_id
   name         String
-  redirectUris Json     // string[] of allowed redirect URIs
+  redirectUris String[] // allowed redirect URIs
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
@@ -98,34 +111,82 @@ model TenantClient {
   @@unique([clientId, tenantId])
 }
 
-model EmailVerificationToken {
-  id        String   @id @default(uuid())
-  userId    String
-  token     String   @unique
-  status    String   @default("pending") // pending | used | expired
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-  usedAt    DateTime?
-  
-  user      User     @relation(fields: [userId], references: [id])
-  
-  @@index([userId])
-  @@index([status, expiresAt])
+enum StoreType {
+  UNKNOWN
+  FRANCHISE // 加盟店
+  BRANCH    // 分店
+  DIRECT    // 直营店
 }
 
-model PasswordResetToken {
-  id        String   @id @default(uuid())
-  userId    String
-  token     String   @unique
-  status    String   @default("pending") // pending | used | expired
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-  usedAt    DateTime?
+model EmailVerification {
+  id          String   @id @default(uuid())
+  userId      String
+  tenantId    String
+  // "验证码"不明文存储：selector + hashedToken 最佳（避免库泄露）
+  selector    String   @unique
+  tokenHash   String
+  purpose     String   // "signup" | "change_email" ...
+  sentTo      String
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
   
-  user      User     @relation(fields: [userId], references: [id])
+  // v0.2.6 10-minute code reuse tracking
+  reuseWindowExpiresAt DateTime?
+  lastSentAt           DateTime @default(now())
+  resendCount          Int      @default(0)
+  
+  user        User     @relation(fields: [userId], references: [id])
   
   @@index([userId])
-  @@index([status, expiresAt])
+  @@index([expiresAt])
+  @@index([reuseWindowExpiresAt])
+}
+
+model PasswordReset {
+  id          String   @id @default(uuid())
+  userId      String
+  tenantId    String
+  selector    String   @unique
+  tokenHash   String
+  sentTo      String
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
+  
+  // v0.2.6 10-minute code reuse tracking
+  reuseWindowExpiresAt DateTime?
+  lastSentAt           DateTime @default(now())
+  resendCount          Int      @default(0)
+  
+  user        User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([reuseWindowExpiresAt])
+}
+
+model LoginAttempt {
+  id             String   @id @default(uuid())
+  userId         String?  // null for non-existent users (anti-enumeration)
+  email          String
+  tenantId       String
+  ipAddress      String
+  userAgent      String?
+  success        Boolean
+  failureReason  String?  // "invalid_password" | "account_locked" | "captcha_required" | "captcha_failed"
+  captchaUsed    Boolean  @default(false)
+  attemptAt      DateTime @default(now())
+  
+  user           User?    @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([email])
+  @@index([ipAddress])
+  @@index([attemptAt])
+  @@index([success])
 }
 
 model AuditLog {

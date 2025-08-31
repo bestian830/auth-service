@@ -64,19 +64,7 @@ export async function postLogin(req: Request, res: Response){
   if (u.passwordHash) {
     passwordValid = await bcrypt.compare(password, u.passwordHash);
   } 
-  // 兜底：如果还有 legacy 明文密码且 hash 为空，临时允许并迁移
-  else if (u.password) {
-    passwordValid = (password === u.password);
-    if (passwordValid) {
-      // 自动迁移：将明文密码升级为哈希
-      const hash = await bcrypt.hash(password, 10); // 使用默认轮数
-      await prisma.user.update({
-        where: { id: u.id },
-        data: { passwordHash: hash, password: null }
-      });
-      audit('password_auto_migrated', { userId: u.id, email });
-    }
-  }
+  // Legacy password support has been removed with the new schema
   
   if (!passwordValid) {
     audit('login_fail', { email, reason: 'invalid_password' });
@@ -97,9 +85,47 @@ export async function getAuthorize(req: Request, res: Response){
     const return_to = encodeURIComponent(req.originalUrl);
     return res.redirect(302, `/login?return_to=${return_to}`);
   }
+
+  // Check if user's email is verified
+  const user = await prisma.user.findUnique({ where: { id: u.id } });
+  if (!user?.emailVerifiedAt) {
+    audit('authorize_unverified_email', { 
+      userId: u.id, 
+      email: u.email, 
+      ip: req.ip 
+    });
+    return res.status(400).send('<h1>Email Not Verified</h1><p>Please verify your email before accessing applications.</p>');
+  }
+
   // 生成一次性授权码
   const { client_id, redirect_uri, scope, state, code_challenge, code_challenge_method, nonce } = req.query as any;
   if (!client_id || !redirect_uri || !code_challenge) return res.status(400).send('invalid_request');
+
+  // Check client exists and validate redirect URI whitelist
+  const client = await prisma.client.findUnique({ 
+    where: { id: client_id },
+    select: { redirectUris: true }
+  });
+  
+  if (!client) {
+    audit('authorize_invalid_client', { 
+      clientId: client_id, 
+      userId: u.id, 
+      ip: req.ip 
+    });
+    return res.status(400).send('invalid_client');
+  }
+
+  if (!client.redirectUris.includes(redirect_uri)) {
+    audit('authorize_invalid_redirect_uri', { 
+      clientId: client_id, 
+      redirectUri: redirect_uri,
+      allowedUris: client.redirectUris,
+      userId: u.id, 
+      ip: req.ip 
+    });
+    return res.status(400).send('invalid_redirect_uri');
+  }
 
   const codeId = crypto.randomUUID();
   await prisma.authorizationCode.create({
@@ -282,13 +308,55 @@ export async function userinfo(req: Request, res: Response){
 export async function revoke(req: Request, res: Response){
   const { refresh_token } = req.body || {};
   if (!refresh_token) return res.status(400).json({ error: 'invalid_request' });
+
+  // Basic Auth for client authentication (prevent DoS)
+  const auth = req.header('authorization') || '';
+  const m = auth.match(/^Basic\s+(.+)$/i);
+  if (!m) {
+    audit('revoke_no_auth', { refreshTokenId: refresh_token, ip: req.ip });
+    return res.status(401).json({ error: 'invalid_client' });
+  }
   
+  const s = Buffer.from(m[1], 'base64').toString('utf8');
+  const [cid, secret] = s.split(':');
+  if (cid !== env.introspectClientId || secret !== env.introspectClientSecret){
+    audit('revoke_invalid_client', { clientId: cid, refreshTokenId: refresh_token, ip: req.ip });
+    return res.status(401).json({ error: 'invalid_client' });
+  }
+
+  // Check that the refresh token belongs to this client (prevent cross-client revocation)
+  const tokenRecord = await prisma.refreshToken.findUnique({
+    where: { id: refresh_token },
+    select: { clientId: true, familyId: true }
+  });
+
+  if (!tokenRecord) {
+    audit('revoke_token_not_found', { clientId: cid, refreshTokenId: refresh_token, ip: req.ip });
+    return res.json({ success: true }); // Return success even if token doesn't exist
+  }
+
+  if (tokenRecord.clientId !== cid) {
+    audit('revoke_client_mismatch', { 
+      clientId: cid, 
+      tokenClientId: tokenRecord.clientId,
+      refreshTokenId: refresh_token, 
+      ip: req.ip 
+    });
+    return res.status(403).json({ error: 'invalid_client' });
+  }
+
+  // Revoke the entire family
   await prisma.refreshToken.updateMany({
-    where: { OR: [{ id: refresh_token }, { familyId: refresh_token }] },
-    data: { status: 'revoked', revokedAt: new Date(), revokeReason: 'manual' }
+    where: { familyId: tokenRecord.familyId },
+    data: { status: 'revoked', revokedAt: new Date(), revokeReason: 'manual_revoke' }
   });
   
-  audit('revoke', { refreshTokenId: refresh_token });
+  audit('revoke', { 
+    clientId: cid, 
+    refreshTokenId: refresh_token, 
+    familyId: tokenRecord.familyId,
+    ip: req.ip 
+  });
   res.json({ success: true });
 }
 
