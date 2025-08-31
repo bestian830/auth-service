@@ -230,8 +230,27 @@ export class IdentityService {
       prisma.user.update({
         where: { id: verification.userId },
         data: { emailVerifiedAt: new Date() }
+      }),
+      // 批量失效同类未使用的验证码（避免旧码误用）
+      prisma.emailVerification.updateMany({
+        where: { 
+          userId: verification.userId,
+          purpose: verification.purpose,
+          consumedAt: null,
+          id: { not: verification.id } // 排除当前已消费的
+        },
+        data: { 
+          consumedAt: new Date(),
+          attempts: 999 // 标记为已清理
+        }
       })
     ]);
+
+    audit('email_verification_batch_sweep', {
+      userId: verification.userId,
+      purpose: verification.purpose,
+      consumedSelector: verification.selector
+    });
 
     return verification.user;
   }
@@ -370,7 +389,7 @@ export class IdentityService {
     // Hash new password
     const passwordHash = await bcrypt.hash(newPassword, env.passwordHashRounds);
 
-    // Mark reset as consumed, update password, and revoke all refresh tokens
+    // Mark reset as consumed, update password, and batch sweep other resets
     await prisma.$transaction([
       prisma.passwordReset.update({
         where: { id: reset.id },
@@ -379,8 +398,25 @@ export class IdentityService {
       prisma.user.update({
         where: { id: reset.userId },
         data: { passwordHash }
+      }),
+      // 批量失效同用户其他未使用的重置码（避免旧码误用）
+      prisma.passwordReset.updateMany({
+        where: { 
+          userId: reset.userId,
+          consumedAt: null,
+          id: { not: reset.id } // 排除当前已消费的
+        },
+        data: { 
+          consumedAt: new Date(),
+          attempts: 999 // 标记为已清理
+        }
       })
     ]);
+
+    audit('password_reset_batch_sweep', {
+      userId: reset.userId,
+      consumedSelector: reset.selector
+    });
 
     // Revoke all refresh token families for this user
     await this.revokeAllUserTokens(reset.userId, 'password_reset');

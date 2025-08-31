@@ -47,6 +47,33 @@ app.use((err: any, _req: any, res: any, _next: any) => {
   res.status(500).json({ error: 'server_error', detail: err?.message });
 });
 
-app.listen(env.port, () => {
-  console.log(`auth-service listening on :${env.port}`);
-});
+// 启动时验证邮件配置
+async function startServer() {
+  try {
+    // 验证邮件配置
+    const { testEmailConfiguration } = await import('./services/mailer.js');
+    const emailTest = await testEmailConfiguration();
+    
+    if (emailTest.success) {
+      console.log(`✅ Email configuration verified (${emailTest.transport})`);
+    } else {
+      console.warn(`⚠️ Email configuration issue (${emailTest.transport}): ${emailTest.error}`);
+      if (env.nodeEnv === 'production') {
+        console.error('❌ Production environment requires working email configuration');
+        // 在生产环境中，可以选择是否要退出进程
+        // process.exit(1);
+      }
+    }
+
+    app.listen(env.port, () => {
+      console.log(`🚀 auth-service listening on :${env.port}`);
+      console.log(`📧 Mail transport: ${emailTest.transport}`);
+      console.log(`🔧 Environment: ${env.nodeEnv}`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();

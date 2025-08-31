@@ -17,6 +17,7 @@ import {
   dualLoginRateLimit, 
   dualRegistrationRateLimit, 
   dualPasswordResetRateLimit,
+  dualVerificationRateLimit,
   markSuccessfulRequest
 } from '../middleware/redisRate.js';
 import { conditionalCaptcha } from '../middleware/captcha.js';
@@ -50,7 +51,7 @@ router.get('/captcha-status', captchaStatus);
 
 // Registration and verification (enhanced with dual rate limiting)
 router.post('/register', dualRegistrationRateLimit, markSuccessfulRequest, register);
-router.post('/verify', verify);
+router.post('/verify', dualVerificationRateLimit, markSuccessfulRequest, verify);
 
 // Authentication (enhanced with CAPTCHA and dual rate limiting)
 router.post('/login', dualLoginRateLimit, conditionalCaptcha(), markSuccessfulRequest, login);

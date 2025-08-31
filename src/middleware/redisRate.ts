@@ -24,15 +24,16 @@ export function createDualRateLimiter(options: DualRateLimitOptions) {
       const rateLimiter = await createRateLimiter();
       const ip = req.ip || 'unknown';
       const email = req.body?.email || 'unknown';
-      const keyPrefix = options.keyPrefix || 'dual_rate';
+      const route = options.keyPrefix || 'dual_rate';
 
       // Skip if this is a successful request and option is enabled
       if (options.skipSuccessfulRequests && res.locals.skipRateLimit) {
         return next();
       }
 
-      // Check email-based rate limit
-      const emailKey = `${keyPrefix}:email:${email}`;
+      // 使用统一的键命名规范：service:auth:rl:<route>:<dimension>:<value>
+      const emailHash = Buffer.from(email).toString('base64').slice(0, 12); // 简化邮箱显示
+      const emailKey = `${env.redisNamespace}:rl:${route}:email:${emailHash}`;
       const emailLimit = await rateLimiter.checkLimit(
         emailKey,
         options.emailMax,
@@ -40,7 +41,7 @@ export function createDualRateLimiter(options: DualRateLimitOptions) {
       );
 
       // Check IP-based rate limit
-      const ipKey = `${keyPrefix}:ip:${ip}`;
+      const ipKey = `${env.redisNamespace}:rl:${route}:ip:${ip}`;
       const ipLimit = await rateLimiter.checkLimit(
         ipKey,
         options.ipMax,
@@ -102,32 +103,41 @@ export function createDualRateLimiter(options: DualRateLimitOptions) {
   };
 }
 
-// Pre-configured dual rate limiter for login attempts
+// Pre-configured dual rate limiter for login attempts (using new hourly config)
 export const dualLoginRateLimit = createDualRateLimiter({
-  emailMax: env.rateLoginEmailMax,
-  emailWindowSec: env.rateLoginEmailWindowSec,
-  ipMax: env.rateLoginIpMax,
-  ipWindowSec: env.rateLoginIpWindowSec,
-  keyPrefix: 'login_rate',
+  emailMax: env.rateMaxLoginPerHr,
+  emailWindowSec: 3600, // 1 hour
+  ipMax: env.rateMaxLoginPerHr * 5, // Allow more per IP for shared networks
+  ipWindowSec: 3600, // 1 hour
+  keyPrefix: 'login',
   skipSuccessfulRequests: true // Only count failed attempts
 });
 
-// Enhanced rate limiting for registration (combines email and IP constraints)
+// Enhanced rate limiting for registration (using new hourly config)
 export const dualRegistrationRateLimit = createDualRateLimiter({
-  emailMax: env.rateMaxRegister,
-  emailWindowSec: env.rateWindowSec,
-  ipMax: env.rateMaxRegister * 3, // Allow more per IP for shared networks
-  ipWindowSec: env.rateWindowSec,
-  keyPrefix: 'registration_rate'
+  emailMax: env.rateMaxRegisterPerHr,
+  emailWindowSec: 3600, // 1 hour
+  ipMax: env.rateMaxRegisterPerHr * 3, // Allow more per IP for shared networks
+  ipWindowSec: 3600, // 1 hour
+  keyPrefix: 'register'
 });
 
-// Enhanced rate limiting for password reset
+// Enhanced rate limiting for password reset (using new hourly config)
 export const dualPasswordResetRateLimit = createDualRateLimiter({
-  emailMax: env.rateMaxReset,
-  emailWindowSec: env.rateWindowSec,
-  ipMax: env.rateMaxReset * 2, // Slightly more lenient for IP
-  ipWindowSec: env.rateWindowSec,
-  keyPrefix: 'reset_rate'
+  emailMax: env.rateMaxResetPerHr,
+  emailWindowSec: 3600, // 1 hour
+  ipMax: env.rateMaxResetPerHr * 2, // Slightly more lenient for IP
+  ipWindowSec: 3600, // 1 hour
+  keyPrefix: 'reset'
+});
+
+// Enhanced rate limiting for verification (using new hourly config)
+export const dualVerificationRateLimit = createDualRateLimiter({
+  emailMax: env.rateMaxVerifyPerHr,
+  emailWindowSec: 3600, // 1 hour
+  ipMax: env.rateMaxVerifyPerHr * 2,
+  ipWindowSec: 3600, // 1 hour
+  keyPrefix: 'verify'
 });
 
 // Middleware to mark successful requests for skipping rate limits

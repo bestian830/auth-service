@@ -64,6 +64,7 @@ export const env = {
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
   redisPassword: process.env.REDIS_PASSWORD ?? '',
   redisDb: Number(process.env.REDIS_DB ?? '0'),
+  redisNamespace: process.env.REDIS_NAMESPACE ?? 'authsvc',
   redisConnectTimeout: Number(process.env.REDIS_CONNECT_TIMEOUT ?? '5000'),
   redisCommandTimeout: Number(process.env.REDIS_COMMAND_TIMEOUT ?? '3000'),
   redisMaxRetries: Number(process.env.REDIS_MAX_RETRIES ?? '3'),
@@ -73,19 +74,31 @@ export const env = {
   smtpAuthPass: process.env.SMTP_AUTH_PASS ?? process.env.SMTP_PASS ?? '',
   mailReplyTo: process.env.MAIL_REPLY_TO ?? '',
 
-  // v0.2.6 Verification code reuse
-  verificationCodeReuseWindowSec: Number(process.env.VERIFICATION_CODE_REUSE_WINDOW_SEC ?? '600'),
+  // v0.2.6 新的验证码配置（分钟单位）
+  verifyCodeTtlMin: Number(process.env.VERIFY_CODE_TTL_MIN ?? '10'),
+  verifyReuseWindowMin: Number(process.env.VERIFY_REUSE_WINDOW_MIN ?? '10'),
+  resetCodeTtlMin: Number(process.env.RESET_CODE_TTL_MIN ?? '10'),
+  resetReuseWindowMin: Number(process.env.RESET_REUSE_WINDOW_MIN ?? '10'),
 
-  // v0.2.6 Dual-dimension rate limiting
+  // v0.2.6 新的限流配置（每小时）
+  rateMaxRegisterPerHr: Number(process.env.RATE_MAX_REGISTER_PER_HR ?? '10'),
+  rateMaxVerifyPerHr: Number(process.env.RATE_MAX_VERIFY_PER_HR ?? '10'),
+  rateMaxResetPerHr: Number(process.env.RATE_MAX_RESET_PER_HR ?? '10'),
+  rateMaxLoginPerHr: Number(process.env.RATE_MAX_LOGIN_PER_HR ?? '10'),
+
+  // v0.2.6 登录失败阈值（新配置）
+  loginCaptchaThreshold: Number(process.env.LOGIN_CAPTCHA_THRESHOLD ?? '3'),
+  loginLockThreshold: Number(process.env.LOGIN_LOCK_THRESHOLD ?? '10'),
+  loginLockMinutes: Number(process.env.LOGIN_LOCK_MINUTES ?? '30'),
+
+  // 向后兼容的旧配置
+  verificationCodeReuseWindowSec: Number(process.env.VERIFICATION_CODE_REUSE_WINDOW_SEC ?? (Number(process.env.VERIFY_REUSE_WINDOW_MIN ?? '10') * 60)),
   rateLoginEmailMax: Number(process.env.RATE_LOGIN_EMAIL_MAX ?? '10'),
   rateLoginEmailWindowSec: Number(process.env.RATE_LOGIN_EMAIL_WINDOW_SEC ?? '3600'),
   rateLoginIpMax: Number(process.env.RATE_LOGIN_IP_MAX ?? '50'),
   rateLoginIpWindowSec: Number(process.env.RATE_LOGIN_IP_WINDOW_SEC ?? '3600'),
-
-  // v0.2.6 Login failure tracking and lockout
-  loginMaxFailures: Number(process.env.LOGIN_MAX_FAILURES ?? '10'),
-  loginLockoutDurationSec: Number(process.env.LOGIN_LOCKOUT_DURATION_SEC ?? '1800'),
-  loginCaptchaThreshold: Number(process.env.LOGIN_CAPTCHA_THRESHOLD ?? '3'),
+  loginMaxFailures: Number(process.env.LOGIN_MAX_FAILURES ?? (process.env.LOGIN_LOCK_THRESHOLD ?? '10')),
+  loginLockoutDurationSec: Number(process.env.LOGIN_LOCKOUT_DURATION_SEC ?? (Number(process.env.LOGIN_LOCK_MINUTES ?? '30') * 60)),
   captchaEnabled: process.env.CAPTCHA_ENABLED === 'true',
 
   // v0.2.6 CAPTCHA Configuration

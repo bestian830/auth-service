@@ -8,7 +8,8 @@ export interface Mailer {
 }
 
 export function getMailer(): Mailer {
-  if (env.mailTransport === 'SMTP') {
+  // 生产环境自动使用SMTP，开发环境优先使用配置
+  if (env.mailTransport === 'SMTP' || (env.nodeEnv === 'production' && env.smtpHost && env.smtpUser)) {
     return new SmtpMailer();
   }
   return new ConsoleMailer();
