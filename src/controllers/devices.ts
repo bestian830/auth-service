@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { deviceService } from '../services/device.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
+import { assertCanAddDevice } from '../middleware/subscription.js';
 
 const createDeviceSchema = z.object({
   orgId: z.string().min(1),
@@ -31,7 +32,15 @@ export class DevicesController {
    */
   async createDevice(req: Request, res: Response) {
     try {
+      // 双重鉴权验证（防止路由配置错误）
+      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
       const body = createDeviceSchema.parse(req.body);
+      
+      // 配额校验（临时使用 standard 计划，后续从用户/组织信息获取）
+      await assertCanAddDevice(body.orgId, 'standard');
       
       const result = await deviceService.createDevice(body);
       
@@ -46,11 +55,19 @@ export class DevicesController {
         deviceSecret: result.deviceSecret,
         warning: 'Device secret will not be shown again. Store it securely.',
       });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to create device', { error: error.message });
       
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid request data', details: error.errors });
+      }
+      
+      if (error.code === 'QUOTA_EXCEEDED') {
+        return res.status(error.status || 422).json({ 
+          error: 'quota_exceeded',
+          message: error.message,
+          type: 'device_quota'
+        });
       }
       
       res.status(500).json({ error: 'Failed to create device' });
@@ -63,6 +80,11 @@ export class DevicesController {
    */
   async listDevices(req: Request, res: Response) {
     try {
+      // 双重鉴权验证
+      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
       const query = listDevicesSchema.parse(req.query);
       
       const devices = await deviceService.listDevices(query.orgId, {
@@ -89,6 +111,11 @@ export class DevicesController {
    */
   async getDevice(req: Request, res: Response) {
     try {
+      // 双重鉴权验证
+      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
       const { deviceId } = req.params;
       
       const device = await deviceService.getDevice(deviceId);
@@ -110,6 +137,11 @@ export class DevicesController {
    */
   async revokeDevice(req: Request, res: Response) {
     try {
+      // 双重鉴权验证
+      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
       const { deviceId } = req.params;
       const body = revokeDeviceSchema.parse(req.body);
       
@@ -139,6 +171,11 @@ export class DevicesController {
    */
   async reactivateDevice(req: Request, res: Response) {
     try {
+      // 双重鉴权验证
+      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
       const { deviceId } = req.params;
       
       const device = await deviceService.reactivateDevice(deviceId);
@@ -161,6 +198,11 @@ export class DevicesController {
    */
   async regenerateSecret(req: Request, res: Response) {
     try {
+      // 双重鉴权验证
+      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
       const { deviceId } = req.params;
       
       const result = await deviceService.regenerateSecret(deviceId);

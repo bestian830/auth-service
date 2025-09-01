@@ -228,6 +228,142 @@ docker run -d \
 - [ ] 配置日志轮转
 - [ ] 设置监控告警
 
+## 🏪 mopai 三处登录位
+
+### 1. 系统启动登录（设备/主机台）
+- **用途**: 设备首次启动或重启后的身份验证
+- **流程**: 设备使用预配置的设备证明进行初始认证
+- **特点**: 长期有效，支持 30 天滑动续期
+```bash
+# 设备启动时的认证流程
+POST /oauth/token
+{
+  "grant_type": "authorization_code",
+  "client_id": "mopai-host",
+  "device_proof": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+}
+```
+
+### 2. 系统使用登录（操作员）
+- **用途**: 门店操作员在已认证设备上的用户登录
+- **流程**: 用户名密码 + 设备证明双重验证
+- **特点**: 基于用户会话，支持快速切换
+```bash
+# 操作员登录（在已认证设备上）
+POST /login
+{
+  "email": "operator@store.com",
+  "password": "password",
+  "device_id": "device_123"
+}
+```
+
+### 3. 老板控制台登录
+- **用途**: 管理端访问，查看数据和配置
+- **流程**: 标准 OAuth2 授权码流程
+- **特点**: Web 端访问，支持多租户管理
+```bash
+# 老板控制台登录重定向
+GET /oauth/authorize?client_id=mopai-web&redirect_uri=...&response_type=code
+```
+
+## 🔄 前端无感刷新 AT 建议
+
+### 实现策略
+1. **到期前缓冲刷新**: AT 到期前 2-3 分钟自动刷新
+2. **失败延迟重试**: 刷新失败时使用指数退避策略
+3. **业务请求排队**: 刷新过程中缓存业务请求，完成后重放
+4. **幂等重放保护**: 避免重复请求导致的副作用
+
+### 示例代码
+```javascript
+class TokenManager {
+  constructor() {
+    this.refreshPromise = null;
+    this.pendingRequests = [];
+  }
+
+  async getValidToken() {
+    const token = this.getStoredToken();
+    
+    // 检查是否需要刷新（到期前 3 分钟）
+    if (this.shouldRefresh(token)) {
+      return await this.refreshToken();
+    }
+    
+    return token.access_token;
+  }
+
+  shouldRefresh(token) {
+    const bufferTime = 3 * 60 * 1000; // 3 分钟缓冲
+    const expiryTime = token.issued_at + (token.expires_in * 1000);
+    return Date.now() + bufferTime >= expiryTime;
+  }
+
+  async refreshToken() {
+    // 防止并发刷新
+    if (this.refreshPromise) {
+      return await this.refreshPromise;
+    }
+
+    this.refreshPromise = this.doRefresh();
+    
+    try {
+      const newToken = await this.refreshPromise;
+      this.replayPendingRequests(newToken);
+      return newToken;
+    } finally {
+      this.refreshPromise = null;
+    }
+  }
+
+  async doRefresh() {
+    const deviceProof = await this.generateDeviceProof(); // mopai 需要
+    
+    const response = await fetch('/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: this.getStoredToken().refresh_token,
+        device_proof: deviceProof // mopai 必需，ploml 可选
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Token refresh failed');
+    }
+
+    const newToken = await response.json();
+    this.storeToken(newToken);
+    return newToken;
+  }
+
+  replayPendingRequests(token) {
+    this.pendingRequests.forEach(({ resolve, request }) => {
+      // 使用新 token 重新发起请求
+      resolve(this.makeRequestWithToken(request, token.access_token));
+    });
+    this.pendingRequests = [];
+  }
+}
+```
+
+## 📝 配额限制说明
+
+### 临时方案
+当前版本使用本地硬限制配额控制：
+- **员工配额**: Trial(3) | Basic(3) | Standard(5) | Pro(10) | Professor(18)
+- **设备配额**: Basic(0) | Standard(1) | Pro(3) | Professor(5)
+- **控制开关**: `SUBS_ENABLE_LOCAL_QUOTA_ENFORCE=true`
+
+### 后续升级
+后续版本将对接订阅服务 API，支持：
+- 实时配额查询
+- 动态计划调整  
+- 使用量统计
+- 跨店配额共享
+
 ## 📖 API 文档
 
 ### 设备管理端点

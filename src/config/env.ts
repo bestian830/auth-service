@@ -120,13 +120,37 @@ export const env = {
   // v0.2.8 Product-specific Refresh Strategies
   refreshStrategyMopai: process.env.REFRESH_STRATEGY_MOPAI ?? 'sliding_renewal',
   refreshStrategyPloml: process.env.REFRESH_STRATEGY_PLOML ?? 'rotation_threshold',
-  refreshSlidingExtendSec: Number(process.env.REFRESH_SLIDING_EXTEND_SEC ?? '604800'),
-  refreshRotationThresholdSec: Number(process.env.REFRESH_ROTATION_THRESHOLD_SEC ?? '86400'),
-  refreshMaxLifetimeSec: Number(process.env.REFRESH_MAX_LIFETIME_SEC ?? '7776000'),
+
+  // v0.2.8 Mopai (设备) 刷新策略数值
+  refreshMopaiSlidingExtendSec: Number(process.env.REFRESH_MOPAI_SLIDING_EXTEND_SEC ?? '2592000'), // 30天
+  refreshMopaiRotationThresholdSec: Number(process.env.REFRESH_MOPAI_ROTATION_THRESHOLD_SEC ?? '1296000'), // 360小时
+  refreshMopaiMaxLifetimeSec: Number(process.env.REFRESH_MOPAI_MAX_LIFETIME_SEC ?? '0'), // 0=无限
+  refreshMopaiInactivityTimeoutSec: Number(process.env.REFRESH_MOPAI_INACTIVITY_TIMEOUT_SEC ?? '2592000'), // 30天不活跃超时
+
+  // v0.2.8 Ploml (人账号) 刷新策略数值
+  refreshPlomlSlidingExtendSec: Number(process.env.REFRESH_PLOML_SLIDING_EXTEND_SEC ?? '1296000'), // 15天
+  refreshPlomlRotationThresholdSec: Number(process.env.REFRESH_PLOML_ROTATION_THRESHOLD_SEC ?? '648000'), // 180小时
+  refreshPlomlMaxLifetimeSec: Number(process.env.REFRESH_PLOML_MAX_LIFETIME_SEC ?? '31536000'), // 365天
 
   // v0.2.8 JTI Cache and Rate Limiting
   jtiCacheEnabledProducts: process.env.JTI_CACHE_ENABLED_PRODUCTS ?? 'mopai,ploml',
   jtiCacheTtlSec: Number(process.env.JTI_CACHE_TTL_SEC ?? '3600'),
   deviceProofRateLimit: Number(process.env.DEVICE_PROOF_RATE_LIMIT ?? '100'),
   deviceProofRateWindowSec: Number(process.env.DEVICE_PROOF_RATE_WINDOW_SEC ?? '3600'),
+
+  // v0.2.8 Subscription Quota Enforcement (临时本地硬限制)
+  subsEnableLocalQuotaEnforce: process.env.SUBS_ENABLE_LOCAL_QUOTA_ENFORCE === 'true',
+
+  // ploml 员工配额
+  quotaPlomlStaffTrial: Number(process.env.QUOTA_PLOML_STAFF_TRIAL ?? '3'),
+  quotaPlomlStaffBasic: Number(process.env.QUOTA_PLOML_STAFF_BASIC ?? '3'),
+  quotaPlomlStaffStandard: Number(process.env.QUOTA_PLOML_STAFF_STANDARD ?? '5'),
+  quotaPlomlStaffPro: Number(process.env.QUOTA_PLOML_STAFF_PRO ?? '10'),
+  quotaPlomlStaffProfessor: Number(process.env.QUOTA_PLOML_STAFF_PROFESSOR ?? '18'),
+
+  // mopai 设备配额
+  quotaMopaiDeviceBasic: Number(process.env.QUOTA_MOPAI_DEVICE_BASIC ?? '0'),
+  quotaMopaiDeviceStandard: Number(process.env.QUOTA_MOPAI_DEVICE_STANDARD ?? '1'),
+  quotaMopaiDevicePro: Number(process.env.QUOTA_MOPAI_DEVICE_PRO ?? '3'),
+  quotaMopaiDeviceProfessor: Number(process.env.QUOTA_MOPAI_DEVICE_PROFESSOR ?? '5'),
 } as const;

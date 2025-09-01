@@ -12,6 +12,13 @@ import bcrypt from 'bcryptjs';
 import { deviceService } from '../services/device.js';
 import { jtiCache } from '../infra/redis.js';
 
+// 产品类型识别辅助函数
+function getProductType(clientId: string): 'mopai' | 'ploml' | 'unknown' {
+  if (clientId.includes('mopai')) return 'mopai';
+  if (clientId.includes('ploml')) return 'ploml';
+  return 'unknown';
+}
+
 // ===== Discovery =====
 export async function discovery(_req: Request, res: Response){
   const base = env.issuerUrl.replace(/\/+$/, '');
@@ -230,20 +237,25 @@ export async function token(req: Request, res: Response){
       try{
         const rotated = await rotateRefreshToken(refresh_token);
         
-        // v0.2.8: Device proof validation for mopai/ploml products
+        // v0.2.8: Device proof validation - 仅 mopai 强制，ploml 可选记录
         let deviceId: string | null = null;
-        if (deviceService.isDeviceProofRequired(rotated.clientId)) {
-          if (!device_proof) {
-            audit('token_refresh_failed', { 
-              refreshTokenId: refresh_token, 
-              clientId: rotated.clientId,
-              reason: 'device_proof_required' 
-            });
-            return res.status(400).json({ error: 'device_proof_required' });
-          }
+        const productType = getProductType(rotated.clientId);
+        const requiresProof = deviceService.isDeviceProofRequired(rotated.clientId);
 
+        if (requiresProof && !device_proof) {
+          audit('token_refresh_failed', { 
+            refreshTokenId: refresh_token, 
+            clientId: rotated.clientId,
+            productType,
+            reason: 'device_proof_required' 
+          });
+          return res.status(400).json({ error: 'device_proof_required' });
+        }
+
+        // 处理设备证明（强制或可选）
+        if (device_proof) {
           try {
-            // Extract device_id from device_proof JWT header or payload
+            // Extract device_id from device_proof JWT
             const [, payloadB64] = device_proof.split('.');
             const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
             deviceId = payload.iss || payload.sub;
@@ -262,6 +274,7 @@ export async function token(req: Request, res: Response){
                 audit('token_refresh_failed', { 
                   refreshTokenId: refresh_token,
                   deviceId,
+                  productType,
                   jti: proofPayload.jti,
                   reason: 'jti_replay' 
                 });
@@ -272,14 +285,33 @@ export async function token(req: Request, res: Response){
               await jtiCache.set(proofPayload.jti, '1', env.jtiCacheTtlSec);
             }
             
-          } catch (error) {
-            audit('token_refresh_failed', { 
-              refreshTokenId: refresh_token,
+            audit('device_proof_verified', {
               deviceId,
-              reason: 'invalid_device_proof',
-              error: error.message
+              productType,
+              jti: proofPayload.jti,
+              required: requiresProof
             });
-            return res.status(401).json({ error: 'invalid_device_proof' });
+            
+          } catch (error) {
+            if (requiresProof) {
+              audit('token_refresh_failed', { 
+                refreshTokenId: refresh_token,
+                deviceId,
+                productType,
+                reason: 'invalid_device_proof',
+                error: error.message
+              });
+              return res.status(401).json({ error: 'invalid_device_proof' });
+            } else {
+              // ploml 可选记录，不阻止请求
+              audit('device_proof_failed', {
+                refreshTokenId: refresh_token,
+                deviceId,
+                productType,
+                reason: 'optional_proof_invalid',
+                error: error.message
+              });
+            }
           }
         }
         
@@ -298,20 +330,95 @@ export async function token(req: Request, res: Response){
           return res.status(400).json({ error: 'invalid_refresh_subject' });
         }
         
-        // v0.2.8: Apply product-specific refresh strategy
+        // v0.2.8: Apply product-specific refresh strategy with product-specific values
         let finalRefreshToken = rotated.newId;
-        if (rotated.clientId.includes('mopai') && env.refreshStrategyMopai === 'sliding_renewal') {
-          // For mopai with sliding renewal, extend the existing token instead of rotating
-          const extendedExpiry = new Date(Date.now() + env.refreshSlidingExtendSec * 1000);
-          const maxLifetime = new Date(rotated.createdAt.getTime() + env.refreshMaxLifetimeSec * 1000);
-          const finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
+        let shouldRotate = false;
+        let strategyParams = {};
+
+        if (productType === 'mopai') {
+          // Mopai 策略参数
+          const slidingExtendSec = env.refreshMopaiSlidingExtendSec;
+          const rotationThresholdSec = env.refreshMopaiRotationThresholdSec;
+          const maxLifetimeSec = env.refreshMopaiMaxLifetimeSec;
+          const inactivityTimeoutSec = env.refreshMopaiInactivityTimeoutSec;
           
-          await prisma.refreshToken.update({
-            where: { id: refresh_token },
-            data: { expiresAt: finalExpiry }
-          });
+          strategyParams = { slidingExtendSec, rotationThresholdSec, maxLifetimeSec, inactivityTimeoutSec };
+
+          // 检查不活跃超时
+          const lastRefreshTime = rotated.rotatedAt || rotated.createdAt;
+          const inactivityDeadline = new Date(lastRefreshTime.getTime() + inactivityTimeoutSec * 1000);
+          if (new Date() > inactivityDeadline) {
+            audit('token_refresh_failed', { 
+              refreshTokenId: refresh_token,
+              productType,
+              reason: 'inactivity_timeout',
+              lastRefresh: lastRefreshTime,
+              inactivityTimeoutSec
+            });
+            return res.status(401).json({ error: 'refresh_token_inactive' });
+          }
+
+          // 检查是否达到轮转阈值
+          const timeSinceLastRotation = Date.now() - lastRefreshTime.getTime();
+          shouldRotate = timeSinceLastRotation > (rotationThresholdSec * 1000);
+
+          if (!shouldRotate && env.refreshStrategyMopai === 'sliding_renewal') {
+            // 滑动续期：延长现有令牌
+            const extendedExpiry = new Date(Date.now() + slidingExtendSec * 1000);
+            let finalExpiry = extendedExpiry;
+
+            // 检查硬上限（0 表示无限）
+            if (maxLifetimeSec > 0) {
+              const maxLifetime = new Date(rotated.createdAt.getTime() + maxLifetimeSec * 1000);
+              finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
+            }
+            
+            await prisma.refreshToken.update({
+              where: { id: refresh_token },
+              data: { expiresAt: finalExpiry }
+            });
+            
+            finalRefreshToken = refresh_token; // Keep same token
+          }
+        } else if (productType === 'ploml') {
+          // Ploml 策略参数
+          const slidingExtendSec = env.refreshPlomlSlidingExtendSec;
+          const rotationThresholdSec = env.refreshPlomlRotationThresholdSec;
+          const maxLifetimeSec = env.refreshPlomlMaxLifetimeSec;
           
-          finalRefreshToken = refresh_token; // Keep same token
+          strategyParams = { slidingExtendSec, rotationThresholdSec, maxLifetimeSec };
+
+          // 检查硬上限
+          const tokenAge = Date.now() - rotated.createdAt.getTime();
+          if (tokenAge > (maxLifetimeSec * 1000)) {
+            audit('token_refresh_failed', { 
+              refreshTokenId: refresh_token,
+              productType,
+              reason: 'max_lifetime_exceeded',
+              tokenAge: Math.floor(tokenAge / 1000),
+              maxLifetimeSec
+            });
+            return res.status(401).json({ error: 'refresh_token_expired' });
+          }
+
+          // 检查轮转阈值
+          const lastRefreshTime = rotated.rotatedAt || rotated.createdAt;
+          const timeSinceLastRotation = Date.now() - lastRefreshTime.getTime();
+          shouldRotate = timeSinceLastRotation > (rotationThresholdSec * 1000);
+
+          if (!shouldRotate && env.refreshStrategyPloml === 'sliding_renewal') {
+            // Ploml 也支持滑动续期（如果配置为此模式）
+            const extendedExpiry = new Date(Date.now() + slidingExtendSec * 1000);
+            const maxLifetime = new Date(rotated.createdAt.getTime() + maxLifetimeSec * 1000);
+            const finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
+            
+            await prisma.refreshToken.update({
+              where: { id: refresh_token },
+              data: { expiresAt: finalExpiry }
+            });
+            
+            finalRefreshToken = refresh_token; // Keep same token
+          }
         }
         
         // 根据租户计算受众（避免跨租户误发）
@@ -331,7 +438,9 @@ export async function token(req: Request, res: Response){
           newRefreshTokenId: finalRefreshToken, 
           tenantId,
           deviceId,
-          strategy: rotated.clientId.includes('mopai') ? env.refreshStrategyMopai : env.refreshStrategyPloml
+          productType,
+          rotated: shouldRotate,
+          ...strategyParams
         });
         
         return res.json({
