@@ -2,6 +2,7 @@ import { prisma } from '../infra/prisma.js';
 import { createRateLimiter, isRedisConnected } from '../infra/redis.js';
 import { env } from '../config/env.js';
 import { audit } from '../middleware/audit.js';
+import type { LoginAttemptRow } from '../types/prisma.js';
 
 export interface UserLockStatus {
   locked: boolean;
@@ -159,14 +160,15 @@ export class UserSecurityService {
           userId,
           attemptAt: { gte: windowStart }
         },
+        select: { success: true, attemptAt: true },
         orderBy: { attemptAt: 'desc' }
-      });
+      }) as LoginAttemptRow[];
 
       const totalAttempts = attempts.length;
-      const successfulAttempts = attempts.filter(a => a.success).length;
+      const successfulAttempts = attempts.filter((a: LoginAttemptRow) => a.success).length;
       const failedAttempts = totalAttempts - successfulAttempts;
-      const lastAttempt = attempts[0] || null;
-      const lastSuccess = attempts.find(a => a.success) || null;
+      const lastAttempt = attempts[0] ?? null;
+      const lastSuccess = attempts.find((a: LoginAttemptRow) => a.success) || null;
 
       // Count recent consecutive failures (since last success)
       let recentFailures = 0;
@@ -180,17 +182,14 @@ export class UserSecurityService {
         successfulAttempts,
         failedAttempts,
         recentFailures,
-        lastAttemptAt: lastAttempt?.attemptAt || null,
-        lastSuccessAt: lastSuccess?.attemptAt || null
+        lastAttemptAt: lastAttempt?.attemptAt ?? null,
+        lastSuccessAt: lastSuccess?.attemptAt ?? null,
       };
 
-    } catch (error: any) {
-      console.error('Error getting login attempt summary:', error);
-      audit('user_security_error', {
-        operation: 'get_attempt_summary',
-        userId,
-        error: error.message
-      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Error getting login attempt summary:', msg);
+      audit('user_security_error', { operation: 'get_attempt_summary', userId, error: msg });
       
       return {
         totalAttempts: 0,

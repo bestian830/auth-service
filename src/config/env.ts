@@ -108,4 +108,25 @@ export const env = {
 
   // v0.2.6 Enhanced audit logging
   enhancedAuditLogging: process.env.ENHANCED_AUDIT_LOGGING === 'true',
+
+  // v0.2.8 Device Proof Configuration
+  requireDeviceProofFor: process.env.REQUIRE_DEVICE_PROOF_FOR ?? 'mopai',
+  proofModeHost: process.env.PROOF_MODE_HOST ?? 'device_secret',
+  proofModeKiosk: process.env.PROOF_MODE_KIOSK ?? 'device_secret',
+  deviceSecretLength: Number(process.env.DEVICE_SECRET_LENGTH ?? '32'),
+  deviceJwtTtlSec: Number(process.env.DEVICE_JWT_TTL_SEC ?? '300'),
+  deviceJwtAlgorithm: process.env.DEVICE_JWT_ALGORITHM ?? 'HS256',
+
+  // v0.2.8 Product-specific Refresh Strategies
+  refreshStrategyMopai: process.env.REFRESH_STRATEGY_MOPAI ?? 'sliding_renewal',
+  refreshStrategyPloml: process.env.REFRESH_STRATEGY_PLOML ?? 'rotation_threshold',
+  refreshSlidingExtendSec: Number(process.env.REFRESH_SLIDING_EXTEND_SEC ?? '604800'),
+  refreshRotationThresholdSec: Number(process.env.REFRESH_ROTATION_THRESHOLD_SEC ?? '86400'),
+  refreshMaxLifetimeSec: Number(process.env.REFRESH_MAX_LIFETIME_SEC ?? '7776000'),
+
+  // v0.2.8 JTI Cache and Rate Limiting
+  jtiCacheEnabledProducts: process.env.JTI_CACHE_ENABLED_PRODUCTS ?? 'mopai,ploml',
+  jtiCacheTtlSec: Number(process.env.JTI_CACHE_TTL_SEC ?? '3600'),
+  deviceProofRateLimit: Number(process.env.DEVICE_PROOF_RATE_LIMIT ?? '100'),
+  deviceProofRateWindowSec: Number(process.env.DEVICE_PROOF_RATE_WINDOW_SEC ?? '3600'),
 } as const;

@@ -137,6 +137,11 @@ model EmailVerification {
   lastSentAt           DateTime @default(now())
   resendCount          Int      @default(0)
   
+  // v0.2.7: short-lived encrypted code reuse
+  tokenEnc    String?  // base64(ciphertext)
+  iv          String?  // base64(12 bytes)
+  tag         String?  // base64(16 bytes)
+  
   user        User     @relation(fields: [userId], references: [id])
   
   @@index([userId])
@@ -160,6 +165,11 @@ model PasswordReset {
   reuseWindowExpiresAt DateTime?
   lastSentAt           DateTime @default(now())
   resendCount          Int      @default(0)
+  
+  // v0.2.7: short-lived encrypted code reuse
+  tokenEnc    String?  // base64(ciphertext)
+  iv          String?  // base64(12 bytes)
+  tag         String?  // base64(16 bytes)
   
   user        User     @relation(fields: [userId], references: [id])
   
@@ -198,4 +208,24 @@ model AuditLog {
   action      String   // login_success / login_fail / authorize / token_issue / token_refresh / refresh_reuse / revoke / introspect / jwks_rotate / jwks_retire …
   subject     String?  // token_id / code_id / client_id / tenant_id …
   detail      Json?
+}
+
+model Device {
+  id          String   @id @default(uuid())
+  orgId       String
+  locationId  String?    // 可为空；后续可用于精确到店
+  type        String     // 'host' | 'kiosk'
+  clientId    String     // 使用的 OAuth client_id（区分 web-mopai/kiosk-mopai）
+  name        String?
+  status      String   @default("active") // active | revoked
+  secretHash  String?   // device_secret 的哈希；DPoP 模式可为空
+  publicJwk   Json?     // 预留 DPoP
+  lastSeenAt  DateTime?
+  createdAt   DateTime @default(now())
+  revokedAt   DateTime?
+  note        String?
+
+  @@index([orgId])
+  @@index([clientId])
+  @@index([status])
 }

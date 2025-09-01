@@ -9,6 +9,8 @@ import { audit } from '../middleware/audit.js';
 import { importJWK, jwtVerify } from 'jose';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import { deviceService } from '../services/device.js';
+import { jtiCache } from '../infra/redis.js';
 
 // ===== Discovery =====
 export async function discovery(_req: Request, res: Response){
@@ -224,9 +226,62 @@ export async function token(req: Request, res: Response){
     }
 
     if (grant_type === 'refresh_token'){
-      const { refresh_token } = req.body;
+      const { refresh_token, device_proof } = req.body;
       try{
         const rotated = await rotateRefreshToken(refresh_token);
+        
+        // v0.2.8: Device proof validation for mopai/ploml products
+        let deviceId: string | null = null;
+        if (deviceService.isDeviceProofRequired(rotated.clientId)) {
+          if (!device_proof) {
+            audit('token_refresh_failed', { 
+              refreshTokenId: refresh_token, 
+              clientId: rotated.clientId,
+              reason: 'device_proof_required' 
+            });
+            return res.status(400).json({ error: 'device_proof_required' });
+          }
+
+          try {
+            // Extract device_id from device_proof JWT header or payload
+            const [, payloadB64] = device_proof.split('.');
+            const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+            deviceId = payload.iss || payload.sub;
+
+            if (!deviceId) {
+              throw new Error('No device ID in proof');
+            }
+
+            // Verify device proof
+            const proofPayload = await deviceService.verifyDeviceProof(deviceId, device_proof);
+            
+            // Check JTI for replay protection
+            if (env.jtiCacheEnabledProducts.split(',').some(p => rotated.clientId.includes(p.trim()))) {
+              const jtiExists = await jtiCache.exists(proofPayload.jti);
+              if (jtiExists) {
+                audit('token_refresh_failed', { 
+                  refreshTokenId: refresh_token,
+                  deviceId,
+                  jti: proofPayload.jti,
+                  reason: 'jti_replay' 
+                });
+                return res.status(400).json({ error: 'device_proof_replay' });
+              }
+              
+              // Cache JTI to prevent replay
+              await jtiCache.set(proofPayload.jti, '1', env.jtiCacheTtlSec);
+            }
+            
+          } catch (error) {
+            audit('token_refresh_failed', { 
+              refreshTokenId: refresh_token,
+              deviceId,
+              reason: 'invalid_device_proof',
+              error: error.message
+            });
+            return res.status(401).json({ error: 'invalid_device_proof' });
+          }
+        }
         
         // 从用户信息获取真实的tenant_id
         let tenantId: string | null = null;
@@ -243,6 +298,22 @@ export async function token(req: Request, res: Response){
           return res.status(400).json({ error: 'invalid_refresh_subject' });
         }
         
+        // v0.2.8: Apply product-specific refresh strategy
+        let finalRefreshToken = rotated.newId;
+        if (rotated.clientId.includes('mopai') && env.refreshStrategyMopai === 'sliding_renewal') {
+          // For mopai with sliding renewal, extend the existing token instead of rotating
+          const extendedExpiry = new Date(Date.now() + env.refreshSlidingExtendSec * 1000);
+          const maxLifetime = new Date(rotated.createdAt.getTime() + env.refreshMaxLifetimeSec * 1000);
+          const finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
+          
+          await prisma.refreshToken.update({
+            where: { id: refresh_token },
+            data: { expiresAt: finalExpiry }
+          });
+          
+          finalRefreshToken = refresh_token; // Keep same token
+        }
+        
         // 根据租户计算受众（避免跨租户误发）
         const aud = `${env.defaultAudPrefix}:${tenantId}`;
         
@@ -251,17 +322,23 @@ export async function token(req: Request, res: Response){
           tenant_id: tenantId,
           roles: [], // 刷新场景通常不扩权
           scopes: [], // 刷新场景通常不扩权
-          device_id: rotated.subject.deviceId ?? null,
+          device_id: deviceId ?? rotated.subject.deviceId ?? null,
           aud
         });
         
-        audit('token_refresh', { refreshTokenId: refresh_token, newRefreshTokenId: rotated.newId, tenantId });
+        audit('token_refresh', { 
+          refreshTokenId: refresh_token, 
+          newRefreshTokenId: finalRefreshToken, 
+          tenantId,
+          deviceId,
+          strategy: rotated.clientId.includes('mopai') ? env.refreshStrategyMopai : env.refreshStrategyPloml
+        });
         
         return res.json({
           access_token: at,
           token_type: 'Bearer',
           expires_in: Number(env.accessTtlSec),
-          refresh_token: rotated.newId
+          refresh_token: finalRefreshToken
         });
       }catch(e:any){
         if (e?.code === 'reuse') {            // 只有"复用"才全家族封禁

@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { prisma } from '../infra/prisma.js';
 import crypto from 'crypto';
 import { SignJWT, importPKCS8, JWTPayload } from 'jose';
+import type { RefreshFamilyRow } from '../types/prisma.js';
 
 export type AccessClaims = {
   jti: string; iat: number; exp: number; iss: string;
@@ -165,17 +166,17 @@ export async function revokeAllUserTokens(userId: string, reason: string): Promi
   revokedFamilies: number;
   revokedTokens: number;
 }> {
-  // Get all active token families for this user
   const activeTokens = await prisma.refreshToken.findMany({
     where: {
       subjectUserId: userId,
       status: 'active'
     },
     select: { familyId: true }
-  });
+  }) as RefreshFamilyRow[];
 
-  // Get unique family IDs
-  const uniqueFamilies = [...new Set(activeTokens.map(t => t.familyId))];
+  const uniqueFamilies: string[] = Array.from(
+    new Set(activeTokens.map((t: RefreshFamilyRow) => t.familyId).filter(Boolean))
+  );
   
   if (uniqueFamilies.length === 0) {
     return { revokedFamilies: 0, revokedTokens: 0 };
@@ -205,17 +206,17 @@ export async function revokeUserTokensGlobally(userId: string, reason: string): 
   revokedFamilies: number;
   revokedTokens: number;
 }> {
-  // Get all active tokens for this user regardless of client/tenant
   const activeTokens = await prisma.refreshToken.findMany({
     where: {
       subjectUserId: userId,
-      status: { in: ['active', 'rotated'] } // Include rotated tokens to fully invalidate families
+      status: { in: ['active', 'rotated'] }
     },
     select: { familyId: true }
-  });
+  }) as RefreshFamilyRow[];
 
-  // Get unique family IDs
-  const uniqueFamilies = [...new Set(activeTokens.map(t => t.familyId))];
+  const uniqueFamilies: string[] = Array.from(
+    new Set(activeTokens.map((t: RefreshFamilyRow) => t.familyId).filter(Boolean))
+  );
   
   if (uniqueFamilies.length === 0) {
     return { revokedFamilies: 0, revokedTokens: 0 };

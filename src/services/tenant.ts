@@ -46,10 +46,14 @@ export async function validateTenantAuthorization(context: TenantAuthContext): P
   let finalAud: string;
 
   if (context.requestedAud) {
-    // 检查请求的 aud 是否在允许的前缀范围内
-    const isAllowed = tenantClient.allowedAudPrefixes.some(prefix => 
-      context.requestedAud!.startsWith(prefix)
-    );
+    // 显式为 string[]，容错空值
+    const prefixes: string[] = Array.isArray(tenantClient.allowedAudPrefixes)
+      ? (tenantClient.allowedAudPrefixes as string[])
+      : [];
+
+    const isAllowed: boolean = prefixes.length === 0
+      ? true
+      : prefixes.some((prefix: string) => context.requestedAud!.startsWith(prefix));
     
     if (!isAllowed) {
       throw new Error('unauthorized_audience');
@@ -114,15 +118,15 @@ export async function getUserTenantScopes(userId: string, clientId: string): Pro
     return [];
   }
 
-  // 根据用户角色过滤可用 scope（这里可以扩展更复杂的权限逻辑）
-  let availableScopes = tenantClient.allowedScopes;
-  
-  // 示例：管理员角色可以访问所有 scope
-  if (!user.roles.includes('admin')) {
-    // 普通用户移除管理相关 scope
-    availableScopes = availableScopes.filter(scope => 
-      !scope.includes('admin') && !scope.includes('manage')
-    );
+  let availableScopes: string[] = Array.isArray(tenantClient.allowedScopes)
+    ? (tenantClient.allowedScopes as string[])
+    : [];
+
+  // 示例：管理员角色可以访问所有 scope；普通用户去掉 admin / manage 相关
+  if (!user.roles?.includes('admin')) {
+    availableScopes = availableScopes.filter((scope: string) => {
+      return !scope.includes('admin') && !scope.includes('manage');
+    });
   }
 
   return availableScopes;

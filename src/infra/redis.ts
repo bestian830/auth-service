@@ -169,3 +169,63 @@ export async function createRateLimiter(): Promise<RedisRateLimiter> {
   const redis = await getRedisClient();
   return new RedisRateLimiter(redis);
 }
+
+// v0.2.8: JTI Cache for device proof replay protection
+export class JTICache {
+  private redis: Redis;
+  private keyPrefix: string;
+
+  constructor(redis: Redis, keyPrefix: string = 'jti') {
+    this.redis = redis;
+    this.keyPrefix = keyPrefix;
+  }
+
+  private getKey(jti: string): string {
+    return `${env.redisNamespace}:${this.keyPrefix}:${jti}`;
+  }
+
+  async set(jti: string, value: string, ttlSeconds: number): Promise<void> {
+    const key = this.getKey(jti);
+    await this.redis.setex(key, ttlSeconds, value);
+  }
+
+  async exists(jti: string): Promise<boolean> {
+    const key = this.getKey(jti);
+    const result = await this.redis.exists(key);
+    return result === 1;
+  }
+
+  async get(jti: string): Promise<string | null> {
+    const key = this.getKey(jti);
+    return await this.redis.get(key);
+  }
+
+  async delete(jti: string): Promise<void> {
+    const key = this.getKey(jti);
+    await this.redis.del(key);
+  }
+
+  async cleanup(): Promise<number> {
+    const pattern = `${env.redisNamespace}:${this.keyPrefix}:*`;
+    const keys = await this.redis.keys(pattern);
+    
+    if (keys.length === 0) {
+      return 0;
+    }
+    
+    return await this.redis.del(...keys);
+  }
+}
+
+export async function createJTICache(): Promise<JTICache> {
+  const redis = await getRedisClient();
+  return new JTICache(redis);
+}
+
+// Export singleton instance for device proof JTI caching
+export const jtiCache = new JTICache({} as Redis);
+
+// Initialize jtiCache with Redis connection
+getRedisClient().then(redis => {
+  (jtiCache as any).redis = redis;
+}).catch(console.error);

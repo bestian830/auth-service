@@ -7,6 +7,7 @@ import { IdentityService } from '../services/identity.js';
 import { revokeFamily } from '../services/token.js';
 import { createRateLimiter, isRedisConnected } from '../infra/redis.js';
 import { verifyCaptcha } from '../middleware/captcha.js';
+import type { RefreshFamilyRow } from '../types/prisma.js';
 
 const identityService = new IdentityService();
 
@@ -437,17 +438,19 @@ export async function logout(req: Request, res: Response) {
           status: 'active'
         },
         select: { familyId: true }
-      });
+      }) as RefreshFamilyRow[];
 
       // Revoke all refresh token families for this user (using service layer)
-      const uniqueFamilies = [...new Set(userTokens.map(t => t.familyId))];
+      const uniqueFamilies: string[] = Array.from(
+        new Set(userTokens.map((t: RefreshFamilyRow) => t.familyId).filter(Boolean))
+      );
+
       for (const familyId of uniqueFamilies) {
-        // Use the token service's revokeFamily function for consistency
         await revokeFamily(familyId, 'logout');
       }
 
-      audit('logout', { 
-        ip: req.ip, 
+      audit('logout', {
+        ip: req.ip,
         userId,
         revokedFamilies: uniqueFamilies.length
       });
@@ -457,8 +460,9 @@ export async function logout(req: Request, res: Response) {
     req.session = null;
 
     res.json({ ok: true });
-  } catch (error: any) {
-    audit('logout_error', { ip: req.ip, error: error.message });
+  } catch (err) {
+    const error = err as Error;
+    audit('logout_error', { ip: req.ip, error: (error && error.message) || String(err) });
     res.status(500).json({ error: 'server_error' });
   }
 }
