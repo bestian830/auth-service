@@ -58,10 +58,12 @@ model RefreshToken {
   rotatedAt        DateTime?
   revokedAt        DateTime?
   revokeReason     String?
+  lastSeenAt       DateTime @default(now()) // v0.2.8-p1: 用于不活跃超时判断
 
   @@index([familyId])
   @@index([subjectUserId])
   @@index([status])
+  @@index([lastSeenAt])
 }
 
 model AuthorizationCode {

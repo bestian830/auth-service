@@ -10,6 +10,7 @@ import adminRoutes from './routes/admin.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
+import { preloadProductMappings } from './config/products.js';
 
 // 创建 logger
 export const logger = pino({
@@ -50,6 +51,10 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 // 启动时验证邮件配置
 async function startServer() {
   try {
+    // 预热产品映射缓存
+    console.log('🔄 Loading product mappings...');
+    await preloadProductMappings();
+    
     // 验证邮件配置
     const { testEmailConfiguration } = await import('./services/mailer.js');
     const emailTest = await testEmailConfiguration();

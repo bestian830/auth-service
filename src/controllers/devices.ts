@@ -4,6 +4,8 @@ import { deviceService } from '../services/device.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { assertCanAddDevice } from '../middleware/subscription.js';
+import { getEffectivePlanForOrg } from '../services/subscriptionPlan.js';
+import { resolveProductType } from '../config/products.js';
 
 const createDeviceSchema = z.object({
   orgId: z.string().min(1),
@@ -39,8 +41,12 @@ export class DevicesController {
 
       const body = createDeviceSchema.parse(req.body);
       
-      // 配额校验（临时使用 standard 计划，后续从用户/组织信息获取）
-      await assertCanAddDevice(body.orgId, 'standard');
+      // 获取真实的订阅计划
+      const productType = await resolveProductType(body.clientId);
+      const effectivePlan = await getEffectivePlanForOrg(body.orgId, productType, body.locationId);
+      
+      // 配额校验
+      await assertCanAddDevice(body.orgId, effectivePlan);
       
       const result = await deviceService.createDevice(body);
       

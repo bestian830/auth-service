@@ -2,6 +2,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { env } from '../config/env.js';
 import { prisma } from '../infra/prisma.js';
+import type { ProductType } from '../config/products.js';
 
 /**
  * v0.2.8: Subscription quota enforcement (临时本地硬限制)

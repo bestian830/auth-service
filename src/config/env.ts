@@ -153,4 +153,13 @@ export const env = {
   quotaMopaiDeviceStandard: Number(process.env.QUOTA_MOPAI_DEVICE_STANDARD ?? '1'),
   quotaMopaiDevicePro: Number(process.env.QUOTA_MOPAI_DEVICE_PRO ?? '3'),
   quotaMopaiDeviceProfessor: Number(process.env.QUOTA_MOPAI_DEVICE_PROFESSOR ?? '5'),
+
+  // v0.2.8-p1 产品识别和计划管理
+  unknownProductStrategy: process.env.UNKNOWN_PRODUCT_STRATEGY ?? 'ploml', // unknown 产品的默认策略
+  defaultPlanMopai: process.env.DEFAULT_PLAN_MOPAI ?? 'standard',
+  defaultPlanPloml: process.env.DEFAULT_PLAN_PLOML ?? 'basic',
+  
+  // 订阅服务配置（预留）
+  subsServiceUrl: process.env.SUBS_SERVICE_URL ?? '',
+  subsServiceToken: process.env.SUBS_SERVICE_TOKEN ?? '',
 } as const;

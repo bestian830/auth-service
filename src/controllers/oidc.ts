@@ -11,13 +11,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { deviceService } from '../services/device.js';
 import { jtiCache } from '../infra/redis.js';
-
-// 产品类型识别辅助函数
-function getProductType(clientId: string): 'mopai' | 'ploml' | 'unknown' {
-  if (clientId.includes('mopai')) return 'mopai';
-  if (clientId.includes('ploml')) return 'ploml';
-  return 'unknown';
-}
+import { resolveProductType, getUnknownProductStrategy, type ProductType } from '../config/products.js';
 
 // ===== Discovery =====
 export async function discovery(_req: Request, res: Response){
@@ -239,7 +233,24 @@ export async function token(req: Request, res: Response){
         
         // v0.2.8: Device proof validation - 仅 mopai 强制，ploml 可选记录
         let deviceId: string | null = null;
-        const productType = getProductType(rotated.clientId);
+        let productType = await resolveProductType(rotated.clientId);
+        
+        // 处理 unknown 产品类型
+        if (productType === 'unknown') {
+          const strategy = getUnknownProductStrategy();
+          audit('unknown_product_type', {
+            clientId: rotated.clientId,
+            strategy,
+            ip: req.ip
+          });
+          
+          if (strategy === 'reject') {
+            return res.status(400).json({ error: 'unsupported_client_product' });
+          }
+          
+          productType = strategy; // 使用默认策略
+        }
+        
         const requiresProof = deviceService.isDeviceProofRequired(rotated.clientId);
 
         if (requiresProof && !device_proof) {
@@ -344,22 +355,22 @@ export async function token(req: Request, res: Response){
           
           strategyParams = { slidingExtendSec, rotationThresholdSec, maxLifetimeSec, inactivityTimeoutSec };
 
-          // 检查不活跃超时
-          const lastRefreshTime = rotated.rotatedAt || rotated.createdAt;
-          const inactivityDeadline = new Date(lastRefreshTime.getTime() + inactivityTimeoutSec * 1000);
+          // 检查不活跃超时（使用 lastSeenAt 字段）
+          const lastSeenTime = rotated.lastSeenAt || rotated.rotatedAt || rotated.createdAt;
+          const inactivityDeadline = new Date(lastSeenTime.getTime() + inactivityTimeoutSec * 1000);
           if (new Date() > inactivityDeadline) {
             audit('token_refresh_failed', { 
               refreshTokenId: refresh_token,
               productType,
               reason: 'inactivity_timeout',
-              lastRefresh: lastRefreshTime,
+              lastSeen: lastSeenTime,
               inactivityTimeoutSec
             });
             return res.status(401).json({ error: 'refresh_token_inactive' });
           }
 
           // 检查是否达到轮转阈值
-          const timeSinceLastRotation = Date.now() - lastRefreshTime.getTime();
+          const timeSinceLastRotation = Date.now() - (rotated.rotatedAt || rotated.createdAt).getTime();
           shouldRotate = timeSinceLastRotation > (rotationThresholdSec * 1000);
 
           if (!shouldRotate && env.refreshStrategyMopai === 'sliding_renewal') {
@@ -373,12 +384,22 @@ export async function token(req: Request, res: Response){
               finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
             }
             
+            // 更新令牌过期时间和最后活跃时间
             await prisma.refreshToken.update({
               where: { id: refresh_token },
-              data: { expiresAt: finalExpiry }
+              data: { 
+                expiresAt: finalExpiry,
+                lastSeenAt: new Date()
+              }
             });
             
             finalRefreshToken = refresh_token; // Keep same token
+          } else if (shouldRotate) {
+            // 需要轮转时，更新原始令牌的 lastSeenAt
+            await prisma.refreshToken.update({
+              where: { id: refresh_token },
+              data: { lastSeenAt: new Date() }
+            });
           }
         } else if (productType === 'ploml') {
           // Ploml 策略参数
@@ -412,12 +433,22 @@ export async function token(req: Request, res: Response){
             const maxLifetime = new Date(rotated.createdAt.getTime() + maxLifetimeSec * 1000);
             const finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
             
+            // 更新令牌过期时间和最后活跃时间
             await prisma.refreshToken.update({
               where: { id: refresh_token },
-              data: { expiresAt: finalExpiry }
+              data: { 
+                expiresAt: finalExpiry,
+                lastSeenAt: new Date()
+              }
             });
             
             finalRefreshToken = refresh_token; // Keep same token
+          } else if (shouldRotate) {
+            // Ploml 轮转时也更新 lastSeenAt
+            await prisma.refreshToken.update({
+              where: { id: refresh_token },
+              data: { lastSeenAt: new Date() }
+            });
           }
         }
         
