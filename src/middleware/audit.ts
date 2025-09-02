@@ -1,5 +1,5 @@
 // src/middleware/audit.ts
-import fs from 'fs';
+import * as fs from 'fs';
 import { env } from '../config/env.js';
 
 export function audit(action: string, detail: any){

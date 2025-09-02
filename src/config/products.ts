@@ -68,15 +68,16 @@ async function loadDbMappings(): Promise<ProductMapping> {
       for (const tc of tenantClients) {
         // 根据受众前缀推断产品类型
         const audPrefixes = tc.allowedAudPrefixes || [];
-        if (audPrefixes.some(prefix => prefix.includes('mopai'))) {
+        if (audPrefixes.some((prefix: string) => prefix.includes('mopai'))) {
           mapping[tc.clientId] = 'mopai';
-        } else if (audPrefixes.some(prefix => prefix.includes('ploml'))) {
+        } else if (audPrefixes.some((prefix: string) => prefix.includes('ploml'))) {
           mapping[tc.clientId] = 'ploml';
         }
       }
     }
   } catch (error) {
-    console.warn('Failed to load DB product mappings:', error.message);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn('Failed to load DB product mappings:', errorMessage);
   }
   
   return mapping;
@@ -171,7 +172,7 @@ export async function preloadProductMappings(): Promise<void> {
 /**
  * 获取未知产品类型的默认处理策略
  */
-export function getUnknownProductStrategy(): ProductType {
+export function getUnknownProductStrategy(): ProductType | 'reject' {
   const strategy = env.unknownProductStrategy || 'ploml';
-  return ['mopai', 'ploml'].includes(strategy) ? strategy as ProductType : 'ploml';
+  return ['mopai', 'ploml', 'reject'].includes(strategy) ? strategy as (ProductType | 'reject') : 'ploml';
 }

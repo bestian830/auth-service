@@ -7,15 +7,52 @@ import { issueRefreshFamily, rotateRefreshToken, revokeFamilyByOldReuse, signAcc
 import { validateClientTenantAccess } from '../services/tenant.js';
 import { audit } from '../middleware/audit.js';
 import { importJWK, jwtVerify } from 'jose';
-import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
+import * as bcrypt from 'bcryptjs';
 import { deviceService } from '../services/device.js';
 import { jtiCache } from '../infra/redis.js';
 import { resolveProductType, getUnknownProductStrategy, type ProductType } from '../config/products.js';
+import { authenticateClient, validateGrantType } from '../services/clientAuth.js';
 
 // ===== Discovery =====
 export async function discovery(_req: Request, res: Response){
   const base = env.issuerUrl.replace(/\/+$/, '');
+  
+  // Dynamically determine supported auth methods based on existing clients
+  const clients = await prisma.client.findMany({
+    select: { 
+      type: true, 
+      authMethod: true 
+    }
+  });
+  
+  const authMethods = new Set<string>();
+  
+  // Add methods based on client types in database
+  for (const client of clients) {
+    if (client.type === 'PUBLIC') {
+      authMethods.add('none');
+    } else if (client.type === 'CONFIDENTIAL') {
+      if (client.authMethod === 'client_secret_basic') {
+        authMethods.add('client_secret_basic');
+      } else if (client.authMethod === 'client_secret_post') {
+        authMethods.add('client_secret_post');
+      }
+    }
+  }
+  
+  // Ensure at least 'none' is supported if no clients exist
+  if (authMethods.size === 0) {
+    authMethods.add('none');
+  }
+  
+  // Determine grant types based on client types
+  const grantTypes = new Set(['authorization_code', 'refresh_token']);
+  const hasConfidentialClients = clients.some((c: any) => c.type === 'CONFIDENTIAL');
+  if (hasConfidentialClients) {
+    grantTypes.add('client_credentials');
+  }
+
   res.json({
     issuer: base,
     authorization_endpoint: `${base}/oauth/authorize`,
@@ -23,10 +60,10 @@ export async function discovery(_req: Request, res: Response){
     jwks_uri: `${base}/jwks.json`,
     userinfo_endpoint: `${base}/userinfo`,
     revocation_endpoint: `${base}/oauth/revoke`,
-    grant_types_supported: ['authorization_code','refresh_token'],
+    grant_types_supported: Array.from(grantTypes),
     response_types_supported: ['code'],
     id_token_signing_alg_values_supported: ['RS256'],
-    token_endpoint_auth_methods_supported: ['none','client_secret_post','client_secret_basic'],
+    token_endpoint_auth_methods_supported: Array.from(authMethods),
     code_challenge_methods_supported: ['S256']
   });
 }
@@ -161,9 +198,28 @@ export async function getAuthorize(req: Request, res: Response){
 export async function token(req: Request, res: Response){
   const { grant_type } = req.body || {};
   try{
+    // Client authentication
+    const clientAuthResult = await authenticateClient(req);
+    if (!clientAuthResult.success) {
+      return res.status(401).json({ 
+        error: 'invalid_client', 
+        error_description: clientAuthResult.error 
+      });
+    }
+
+    const { clientId, clientType } = clientAuthResult;
+    
+    // Validate grant type is allowed for client type
+    if (!validateGrantType(clientType!, grant_type)) {
+      return res.status(400).json({ 
+        error: 'unauthorized_client',
+        error_description: `Grant type '${grant_type}' not allowed for ${clientType} client`
+      });
+    }
+
     if (grant_type === 'authorization_code'){
-      const { code, code_verifier, client_id, redirect_uri } = req.body;
-      if (!code || !code_verifier || !client_id || !redirect_uri) {
+      const { code, code_verifier, redirect_uri } = req.body;
+      if (!code || !code_verifier || !redirect_uri) {
         return res.status(400).json({ error: 'invalid_request' });
       }
       const c = await prisma.authorizationCode.findUnique({ where: { id: code }});
@@ -172,50 +228,53 @@ export async function token(req: Request, res: Response){
       }
 
       // ✅ 必修1：授权码绑定校验，防止换绑/窃用
-      if (c.clientId !== client_id || c.redirectUri !== redirect_uri) {
+      if (c.clientId !== clientId || c.redirectUri !== redirect_uri) {
         audit('token_denied', {
-          clientId: client_id, tenantId: c.tenantId, reason: 'code_binding_mismatch'
+          clientId, tenantId: c.tenantId, reason: 'code_binding_mismatch'
         });
         return res.status(400).json({ error: 'invalid_grant' });
       }
 
       // 校验 PKCE (S256)
-      const challenge = require('crypto').createHash('sha256').update(code_verifier).digest('base64')
+      const challenge = crypto.createHash('sha256').update(code_verifier).digest('base64')
         .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
       if (c.codeChallengeMethod !== 'S256' || challenge !== c.codeChallenge){
         return res.status(400).json({ error: 'invalid_grant' });
       }
-      // 强校验：client_id 是否允许在该 tenant 下使用
-      const isClientAllowed = await validateClientTenantAccess(client_id, c.tenantId!);
+      // ✅ 标准化一个可用的 clientId
+      const resolvedClientId: string = clientId!;
+      
+      // 强校验：clientId 是否允许在该 tenant 下使用
+      const isClientAllowed = await validateClientTenantAccess(resolvedClientId, c.tenantId!);
       if (!isClientAllowed) {
-        audit('token_denied', { clientId: client_id, tenantId: c.tenantId, reason: 'unauthorized_client_tenant' });
+        audit('token_denied', { clientId: resolvedClientId, tenantId: c.tenantId, reason: 'unauthorized_client_tenant' });
         return res.status(401).json({ error: 'unauthorized_client_tenant' });
       }
       
       // 多租户与受众：从 TenantClient 上下文兜底 aud
-      const tc = await prisma.tenantClient.findFirst({ where: { clientId: client_id, tenantId: c.tenantId || undefined }});
+      const tc = await prisma.tenantClient.findFirst({ where: { clientId: resolvedClientId, tenantId: c.tenantId || undefined }});
       const aud = tc?.defaultAud ?? `${env.defaultAudPrefix}:${c.tenantId}`;
       const scopes = (c.scope || '').split(/\s+/).filter(Boolean);
       
       // 发 RT 家族
-      const { refreshId } = await issueRefreshFamily({ userId: c.subjectUserId!, clientId: client_id, tenantId: c.tenantId! });
+      const { refreshId } = await issueRefreshFamily({ userId: c.subjectUserId!, clientId: resolvedClientId, tenantId: c.tenantId! });
 
       // AT 面向 API（aud = API 受众）
       const at = await signAccessToken({
         sub: c.subjectUserId!, tenant_id: c.tenantId!, roles: [], scopes, aud
       });
       
-      // ✅ 必修2&3：ID Token 面向客户端 aud=client_id，并包含 nonce（若存在）
+      // ✅ 必修2&3：ID Token 面向客户端 aud=clientId，并包含 nonce（若存在）
       const idToken = await signIdToken({
         sub: c.subjectUserId!, 
         tenant_id: c.tenantId!, 
-        client_id, 
+        aud: resolvedClientId, 
         nonce: c.nonce || undefined
       });
 
       await prisma.authorizationCode.update({ where: { id: code }, data: { used: true, usedAt: new Date() }});
       
-      audit('token_issue', { clientId: client_id, userId: c.subjectUserId, grantType: grant_type });
+      audit('token_issue', { clientId: resolvedClientId, userId: c.subjectUserId, grantType: grant_type });
 
       return res.json({
         access_token: at,
@@ -303,7 +362,7 @@ export async function token(req: Request, res: Response){
               required: requiresProof
             });
             
-          } catch (error) {
+          } catch (error: any) {
             if (requiresProof) {
               audit('token_refresh_failed', { 
                 refreshTokenId: refresh_token,
@@ -341,30 +400,34 @@ export async function token(req: Request, res: Response){
           return res.status(400).json({ error: 'invalid_refresh_subject' });
         }
         
-        // v0.2.8: Apply product-specific refresh strategy with product-specific values
+        // v0.2.8-p2: Apply product-specific refresh strategy (天/小时单位)
         let finalRefreshToken = rotated.newId;
         let shouldRotate = false;
         let strategyParams = {};
 
         if (productType === 'mopai') {
-          // Mopai 策略参数
-          const slidingExtendSec = env.refreshMopaiSlidingExtendSec;
-          const rotationThresholdSec = env.refreshMopaiRotationThresholdSec;
-          const maxLifetimeSec = env.refreshMopaiMaxLifetimeSec;
-          const inactivityTimeoutSec = env.refreshMopaiInactivityTimeoutSec;
+          // Mopai 策略参数（转换为秒）
+          const slidingExtendSec = env.mopaiRefreshSlidingDays * 24 * 3600;
+          const rotationThresholdSec = env.mopaiRotateThresholdHours * 3600;
+          const inactivityTimeoutSec = env.mopaiInactivityLogoutDays * 24 * 3600;
           
-          strategyParams = { slidingExtendSec, rotationThresholdSec, maxLifetimeSec, inactivityTimeoutSec };
+          strategyParams = { 
+            slidingDays: env.mopaiRefreshSlidingDays,
+            rotateHours: env.mopaiRotateThresholdHours,
+            inactivityDays: env.mopaiInactivityLogoutDays
+          };
 
-          // 检查不活跃超时（使用 lastSeenAt 字段）
+          // 检查不活跃超时（仅 mopai 生效）
           const lastSeenTime = rotated.lastSeenAt || rotated.rotatedAt || rotated.createdAt;
           const inactivityDeadline = new Date(lastSeenTime.getTime() + inactivityTimeoutSec * 1000);
           if (new Date() > inactivityDeadline) {
-            audit('token_refresh_failed', { 
+            audit('refresh_inactive_logout', { 
               refreshTokenId: refresh_token,
-              productType,
-              reason: 'inactivity_timeout',
+              product: productType,
               lastSeen: lastSeenTime,
-              inactivityTimeoutSec
+              inactivityDays: env.mopaiInactivityLogoutDays,
+              userId: rotated.subject.userId,
+              deviceId: rotated.subject.deviceId
             });
             return res.status(401).json({ error: 'refresh_token_inactive' });
           }
@@ -373,51 +436,66 @@ export async function token(req: Request, res: Response){
           const timeSinceLastRotation = Date.now() - (rotated.rotatedAt || rotated.createdAt).getTime();
           shouldRotate = timeSinceLastRotation > (rotationThresholdSec * 1000);
 
-          if (!shouldRotate && env.refreshStrategyMopai === 'sliding_renewal') {
+          if (shouldRotate) {
+            // 轮转时更新 lastSeenAt
+            await prisma.refreshToken.update({
+              where: { id: refresh_token },
+              data: { lastSeenAt: new Date() }
+            });
+            
+            audit('refresh_rotate', {
+              refreshTokenId: refresh_token,
+              newRefreshTokenId: rotated.newId,
+              product: productType,
+              rotateHours: env.mopaiRotateThresholdHours,
+              userId: rotated.subject.userId,
+              deviceId: rotated.subject.deviceId
+            });
+          } else {
             // 滑动续期：延长现有令牌
             const extendedExpiry = new Date(Date.now() + slidingExtendSec * 1000);
-            let finalExpiry = extendedExpiry;
-
-            // 检查硬上限（0 表示无限）
-            if (maxLifetimeSec > 0) {
-              const maxLifetime = new Date(rotated.createdAt.getTime() + maxLifetimeSec * 1000);
-              finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
-            }
             
-            // 更新令牌过期时间和最后活跃时间
             await prisma.refreshToken.update({
               where: { id: refresh_token },
               data: { 
-                expiresAt: finalExpiry,
+                expiresAt: extendedExpiry,
                 lastSeenAt: new Date()
               }
             });
             
             finalRefreshToken = refresh_token; // Keep same token
-          } else if (shouldRotate) {
-            // 需要轮转时，更新原始令牌的 lastSeenAt
-            await prisma.refreshToken.update({
-              where: { id: refresh_token },
-              data: { lastSeenAt: new Date() }
+            
+            audit('refresh_sliding', {
+              refreshTokenId: refresh_token,
+              product: productType,
+              slidingDays: env.mopaiRefreshSlidingDays,
+              newExpiry: extendedExpiry,
+              userId: rotated.subject.userId,
+              deviceId: rotated.subject.deviceId
             });
           }
         } else if (productType === 'ploml') {
-          // Ploml 策略参数
-          const slidingExtendSec = env.refreshPlomlSlidingExtendSec;
-          const rotationThresholdSec = env.refreshPlomlRotationThresholdSec;
-          const maxLifetimeSec = env.refreshPlomlMaxLifetimeSec;
+          // Ploml 策略参数（转换为秒）
+          const slidingExtendSec = env.plomlRefreshSlidingDays * 24 * 3600;
+          const rotationThresholdSec = env.plomlRotateThresholdHours * 3600;
+          const maxLifetimeSec = env.plomlRefreshHardLimitDays * 24 * 3600;
           
-          strategyParams = { slidingExtendSec, rotationThresholdSec, maxLifetimeSec };
+          strategyParams = { 
+            slidingDays: env.plomlRefreshSlidingDays,
+            rotateHours: env.plomlRotateThresholdHours,
+            hardLimitDays: env.plomlRefreshHardLimitDays
+          };
 
           // 检查硬上限
           const tokenAge = Date.now() - rotated.createdAt.getTime();
           if (tokenAge > (maxLifetimeSec * 1000)) {
             audit('token_refresh_failed', { 
               refreshTokenId: refresh_token,
-              productType,
+              product: productType,
               reason: 'max_lifetime_exceeded',
-              tokenAge: Math.floor(tokenAge / 1000),
-              maxLifetimeSec
+              tokenAgeDays: Math.floor(tokenAge / (24 * 3600 * 1000)),
+              hardLimitDays: env.plomlRefreshHardLimitDays,
+              userId: rotated.subject.userId
             });
             return res.status(401).json({ error: 'refresh_token_expired' });
           }
@@ -427,13 +505,26 @@ export async function token(req: Request, res: Response){
           const timeSinceLastRotation = Date.now() - lastRefreshTime.getTime();
           shouldRotate = timeSinceLastRotation > (rotationThresholdSec * 1000);
 
-          if (!shouldRotate && env.refreshStrategyPloml === 'sliding_renewal') {
-            // Ploml 也支持滑动续期（如果配置为此模式）
+          if (shouldRotate) {
+            // Ploml 轮转时也更新 lastSeenAt
+            await prisma.refreshToken.update({
+              where: { id: refresh_token },
+              data: { lastSeenAt: new Date() }
+            });
+            
+            audit('refresh_rotate', {
+              refreshTokenId: refresh_token,
+              newRefreshTokenId: rotated.newId,
+              product: productType,
+              rotateHours: env.plomlRotateThresholdHours,
+              userId: rotated.subject.userId
+            });
+          } else {
+            // Ploml 滑动续期（如果配置为此模式）
             const extendedExpiry = new Date(Date.now() + slidingExtendSec * 1000);
             const maxLifetime = new Date(rotated.createdAt.getTime() + maxLifetimeSec * 1000);
             const finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
             
-            // 更新令牌过期时间和最后活跃时间
             await prisma.refreshToken.update({
               where: { id: refresh_token },
               data: { 
@@ -443,11 +534,13 @@ export async function token(req: Request, res: Response){
             });
             
             finalRefreshToken = refresh_token; // Keep same token
-          } else if (shouldRotate) {
-            // Ploml 轮转时也更新 lastSeenAt
-            await prisma.refreshToken.update({
-              where: { id: refresh_token },
-              data: { lastSeenAt: new Date() }
+            
+            audit('refresh_sliding', {
+              refreshTokenId: refresh_token,
+              product: productType,
+              slidingDays: env.plomlRefreshSlidingDays,
+              newExpiry: finalExpiry,
+              userId: rotated.subject.userId
             });
           }
         }
@@ -648,7 +741,7 @@ export async function introspect(req: Request, res: Response){
       acr: (decoded as any).acr
     });
 
-  } catch (error) {
+  } catch (error: any) {
     // JWT验证失败（过期、签名错误等）
     audit('introspect', { clientId: cid, result: 'token_invalid', error: error instanceof Error ? error.message : String(error) });
     return res.json({ active: false });

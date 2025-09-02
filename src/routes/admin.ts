@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { setStoreType, unlockUser } from '../controllers/admin.js';
+import { setStoreType, unlockUser, reloadProductMap, getOrgQuotaUsage, healthCheck } from '../controllers/admin.js';
 import { requireBearer } from '../middleware/bearer.js';
 import { requireAdmin } from '../middleware/roles.js';
 
@@ -14,5 +14,12 @@ router.patch('/users/:id/store-type', setStoreType);
 
 // User security management (v0.2.6)
 router.patch('/users/:userId/unlock', unlockUser);
+
+// Configuration management (v0.2.8-p2)
+router.post('/config/reload-product-map', reloadProductMap);
+
+// System monitoring (v0.2.8-p2)
+router.get('/health', healthCheck);
+router.get('/orgs/:orgId/quota', getOrgQuotaUsage);
 
 export default router;

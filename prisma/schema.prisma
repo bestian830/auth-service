@@ -38,10 +38,25 @@ model User {
   loginAttempts              LoginAttempt[]
 }
 
+enum ClientType {
+  PUBLIC
+  CONFIDENTIAL
+}
+
+enum TokenEndpointAuthMethod {
+  none
+  client_secret_basic
+  client_secret_post
+}
+
 model Client {
-  id           String   @id       // client_id
-  name         String
-  redirectUris String[] // allowed redirect URIs
+  id           String   @id @default(cuid())  // internal id
+  clientId     String   @unique               // oauth client_id  
+  name         String?
+  type         ClientType @default(PUBLIC)
+  secretHash   String?                       // 仅 CONFIDENTIAL 需要
+  authMethod   TokenEndpointAuthMethod @default(none)
+  redirectUris String[]                      // allowed redirect URIs
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }

@@ -3,6 +3,8 @@ import { prisma } from './prisma.js';
 import { env } from '../config/env.js';
 import { createHash, generateKeyPairSync } from 'crypto';
 import { exportJWK } from 'jose';
+import { seal, open } from './cryptoVault.js';
+import { any } from 'zod';
 
 type DbKey = {
   kid: string; type: string; status: 'active'|'grace'|'retired';
@@ -12,18 +14,31 @@ type DbKey = {
 
 function computeJwksEtag(keys: any[]): string {
   const raw = JSON.stringify(keys.map(k => ({ kid: k.kid, e: k.e, n: k.n, use: k.use })));
-  const h = createHash('sha1').update(raw).digest('hex');
-  return `"jwks-${h}"`;
+  const h = createHash('sha256').update(raw).digest('base64url');
+  return `W/"jwks-${h}"`; // Weak ETag for CDN compatibility
 }
 
 export async function getActiveKey(): Promise<DbKey|null> {
   const k = await prisma.key.findFirst({ where: { status: 'active' }});
-  return k as any;
+  if (!k) return null;
+  
+  // Decrypt private key if encrypted
+  const privatePem = env.keystoreEncKey ? open(k.privatePem) : k.privatePem;
+  
+  return {
+    ...k,
+    privatePem
+  } as any;
 }
 
 export async function getGraceKeys(): Promise<DbKey[]> {
   const ks = await prisma.key.findMany({ where: { status: 'grace' }});
-  return ks as any;
+  
+  // Decrypt private keys if encrypted
+  return ks.map((k: any) => ({
+    ...k,
+    privatePem: env.keystoreEncKey ? open(k.privatePem) : k.privatePem
+  })) as any;
 }
 
 export async function ensureOneActiveKey(): Promise<void> {
@@ -45,8 +60,19 @@ export async function rotateKey(): Promise<DbKey> {
   const kid = `kid-${Date.now()}`;
   const publicJwk = { ...jwk, kid, alg: 'RS256', use: 'sig' };
 
+  // Encrypt private key if encryption is enabled
+  const encryptedPrivatePem = env.keystoreEncKey ? seal(privatePem) : privatePem;
+
   const created = await prisma.key.create({
-    data: { kid, type: 'RSA', status: 'active', privatePem, publicJwk, createdAt: new Date(), activatedAt: new Date() }
+    data: { 
+      kid, 
+      type: 'RSA', 
+      status: 'active', 
+      privatePem: encryptedPrivatePem, 
+      publicJwk, 
+      createdAt: new Date(), 
+      activatedAt: new Date() 
+    }
   });
 
   // 3) 只保留一把 grace，更多的设为 retired

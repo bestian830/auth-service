@@ -1,4 +1,5 @@
 // src/config/env.ts
+import './env.validate.js'; // Trigger validation at import time
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   issuerUrl: process.env.ISSUER_URL ?? 'http://localhost:8080/',
@@ -162,4 +163,19 @@ export const env = {
   // 订阅服务配置（预留）
   subsServiceUrl: process.env.SUBS_SERVICE_URL ?? '',
   subsServiceToken: process.env.SUBS_SERVICE_TOKEN ?? '',
+
+  // v0.2.8-p2 新格式刷新策略参数（天/小时单位）
+  mopaiRefreshSlidingDays: Number(process.env.MOPAI_REFRESH_SLIDING_DAYS ?? '30'),
+  mopaiRotateThresholdHours: Number(process.env.MOPAI_ROTATE_THRESHOLD_HOURS ?? '360'),
+  mopaiInactivityLogoutDays: Number(process.env.MOPAI_INACTIVITY_LOGOUT_DAYS ?? '30'),
+
+  plomlRefreshSlidingDays: Number(process.env.PLOML_REFRESH_SLIDING_DAYS ?? '15'),
+  plomlRotateThresholdHours: Number(process.env.PLOML_ROTATE_THRESHOLD_HOURS ?? '180'),
+  plomlRefreshHardLimitDays: Number(process.env.PLOML_REFRESH_HARD_LIMIT_DAYS ?? '365'),
+
+  // v0.2.9 Security enhancements
+  allowedOrigins: process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000',
+  metricsToken: process.env.METRICS_TOKEN ?? 'dev-metrics-token',
+  keystoreEncKey: process.env.KEYSTORE_ENC_KEY ?? '',
+  cookieSameSite: process.env.COOKIE_SAMESITE ?? 'lax',
 } as const;

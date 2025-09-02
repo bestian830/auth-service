@@ -1,7 +1,7 @@
 // src/services/token.ts
 import { env } from '../config/env.js';
 import { prisma } from '../infra/prisma.js';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { SignJWT, importPKCS8, JWTPayload } from 'jose';
 import type { RefreshFamilyRow } from '../types/prisma.js';
 
@@ -64,7 +64,7 @@ export async function signAccessToken(payload: {
 export async function signIdToken(payload: {
   sub: string; 
   tenant_id: string; 
-  client_id: string;   // ✅ 用客户端作为 ID Token 的 aud
+  aud: string;   // ✅ OIDC 标准字段，传入 clientId
   nonce?: string;      // ✅ 回显授权请求的 nonce（如有）
   acr?: string;
 }): Promise<string> {
@@ -73,7 +73,7 @@ export async function signIdToken(payload: {
   const { privateKey, kid } = await getActivePrivateKey();
   const claims: JWTPayload = {
     iss: env.issuerUrl,
-    aud: payload.client_id,           // ✅ OIDC 要求 aud=client_id
+    aud: payload.aud,           // ✅ OIDC 要求 aud=clientId
     sub: payload.sub,
     iat, exp,
     jti: crypto.randomUUID(),
@@ -83,7 +83,7 @@ export async function signIdToken(payload: {
   };
   return await new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid })
-    .setIssuer(env.issuerUrl).setAudience(payload.client_id)
+    .setIssuer(env.issuerUrl).setAudience(payload.aud)
     .setSubject(payload.sub)
     .setIssuedAt(iat).setExpirationTime(exp).sign(privateKey);
 }
@@ -141,7 +141,14 @@ export async function rotateRefreshToken(oldId: string){
       expiresAt: new Date(Date.now() + Number(env.refreshTtlSec)*1000)
     }
   });
-  return { newId, subject: { userId: old.subjectUserId, deviceId: old.subjectDeviceId } };
+  return { 
+    newId, 
+    subject: { userId: old.subjectUserId, deviceId: old.subjectDeviceId },
+    clientId: old.clientId,
+    lastSeenAt: old.lastSeenAt,
+    rotatedAt: new Date(),
+    createdAt: old.createdAt
+  };
 }
 
 export async function revokeFamilyByOldReuse(oldId: string){

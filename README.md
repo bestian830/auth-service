@@ -1,8 +1,35 @@
-# auth-service v0.2.8
+# auth-service v0.2.8-p2
 
 企业级 OAuth2/OpenID Connect 认证服务，支持多租户、设备证明和加密验证码复用。
 
-## ✨ v0.2.8 新特性
+## ✨ v0.2.8-p2 抛光版新特性
+
+### 🎯 产品线判定中间件
+- **统一产品解析**: 支持 header、query、client_map 等多种方式
+- **优雅降级策略**: unknown 产品支持 reject/fallback 策略
+- **运行时重载**: 管理员可热重载产品客户端映射
+
+### 🔧 环境配置验证
+- **Zod 模式验证**: 启动时验证所有环境变量格式
+- **类型安全**: 提供完整的 TypeScript 类型支持
+- **开发友好**: 开发环境容错，生产环境严格校验
+
+### 🔐 设备证明增强
+- **HMAC-SHA256 验证**: 基于 baseString 的设备身份验证
+- **JTI 重放保护**: 防止设备证明重复使用
+- **产品特定策略**: mopai 强制，ploml 可选
+
+### 📊 订阅可观测性
+- **配额检查服务**: 实时查询组织配额使用情况
+- **审计事件标准化**: 统一审计事件命名规范
+- **管理接口增强**: 新增配额查询和系统健康检查
+
+### ⚙️ 管理运维接口
+- **配置热重载**: `POST /admin/config/reload-product-map`
+- **配额查询**: `GET /admin/orgs/:orgId/quota`
+- **系统健康检查**: `GET /admin/health`
+
+## ✨ v0.2.8 核心特性
 
 ### 🔐 设备证明 (Device Proof)
 - **设备注册与管理**: 支持 host 和 kiosk 设备类型
@@ -110,7 +137,48 @@ POST /oauth/token
 
 ## 🔧 配置说明
 
-### 设备证明配置
+### v0.2.8-p2 新增配置
+
+#### 产品线映射配置
+```env
+# 产品客户端映射 (格式: clientId:product,...)
+PRODUCT_CLIENT_MAP=web-ploml:ploml,web-mopai:mopai,kiosk-mopai:mopai
+
+# 未知产品策略: ploml | mopai | reject
+UNKNOWN_PRODUCT_STRATEGY=ploml
+
+# 产品默认计划
+DEFAULT_PLAN_MOPAI=standard
+DEFAULT_PLAN_PLOML=basic
+```
+
+#### 刷新策略配置（天/小时单位）
+```env
+# MOPAI 产品配置（设备友好）
+MOPAI_REFRESH_SLIDING_DAYS=30        # 30天滑动续期
+MOPAI_ROTATE_THRESHOLD_HOURS=360     # 360小时轮转阈值  
+MOPAI_INACTIVITY_LOGOUT_DAYS=30      # 30天不活跃超时
+
+# PLOML 产品配置（用户友好）
+PLOML_REFRESH_SLIDING_DAYS=15        # 15天滑动续期
+PLOML_ROTATE_THRESHOLD_HOURS=180     # 180小时轮转阈值
+PLOML_REFRESH_HARD_LIMIT_DAYS=365    # 365天硬限制
+```
+
+#### 设备证明配置（增强）
+```env
+# 设备证明头部格式: X-Device-Id, X-JTI, X-TS, X-Device-Proof
+REQUIRE_DEVICE_PROOF_FOR=mopai       # 仅 mopai 强制
+
+# HMAC 设备证明配置
+DEVICE_SECRET_LENGTH=32
+DEVICE_JWT_TTL_SEC=300
+JTI_CACHE_TTL_SEC=300
+```
+
+### 传统配置
+
+#### 设备证明配置
 ```env
 # 需要设备证明的产品
 REQUIRE_DEVICE_PROOF_FOR=mopai,ploml
@@ -365,6 +433,88 @@ class TokenManager {
 - 跨店配额共享
 
 ## 📖 API 文档
+
+### v0.2.8-p2 管理端点
+
+#### 配置管理
+```bash
+# 重新加载产品客户端映射
+POST /admin/config/reload-product-map
+Authorization: Bearer <admin_token>
+
+# 响应示例
+{
+  "success": true,
+  "message": "Product client mapping reloaded successfully",
+  "mapping": {
+    "web-ploml": "ploml",
+    "web-mopai": "mopai"
+  },
+  "timestamp": "2024-03-15T10:30:00.000Z"
+}
+```
+
+#### 配额管理
+```bash
+# 查询组织配额使用情况
+GET /admin/orgs/:orgId/quota?product=ploml&locationId=store-001
+Authorization: Bearer <admin_token>
+
+# 响应示例
+{
+  "success": true,
+  "data": {
+    "orgId": "org-123",
+    "product": "ploml", 
+    "plan": "standard",
+    "quotas": {
+      "staff": 5,
+      "devices": 0
+    },
+    "usage": {
+      "staff": 3,
+      "devices": 0
+    },
+    "staffExceeded": false,
+    "devicesExceeded": false
+  }
+}
+```
+
+#### 系统监控
+```bash
+# 健康检查
+GET /admin/health
+Authorization: Bearer <admin_token>
+
+# 响应示例
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "timestamp": "2024-03-15T10:30:00.000Z",
+    "uptime": 86400,
+    "memory": {
+      "rss": 45678592,
+      "heapTotal": 23456789,
+      "heapUsed": 12345678
+    },
+    "version": "0.2.8-p2",
+    "node": "v18.17.0"
+  }
+}
+```
+
+#### 产品中间件
+```bash
+# 产品判定头部示例
+X-Product: mopai                    # 直接指定产品
+?product=ploml                      # 查询参数指定
+
+# 客户端映射 fallback
+client_id=web-mopai → product=mopai
+client_id=unknown → 按 UNKNOWN_PRODUCT_STRATEGY 处理
+```
 
 ### 设备管理端点
 

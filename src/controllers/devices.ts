@@ -53,7 +53,7 @@ export class DevicesController {
       logger.info('Device created via API', {
         deviceId: result.device.id,
         orgId: body.orgId,
-        adminUser: req.user?.sub,
+        adminUser: (req as any).claims?.sub,
       });
 
       res.status(201).json({
@@ -100,7 +100,7 @@ export class DevicesController {
       });
 
       res.json({ devices });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to list devices', { error: error.message });
       
       if (error instanceof z.ZodError) {
@@ -131,7 +131,7 @@ export class DevicesController {
       }
 
       res.json({ device });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to get device', { error: error.message, deviceId: req.params.deviceId });
       res.status(500).json({ error: 'Failed to get device' });
     }
@@ -156,11 +156,11 @@ export class DevicesController {
       logger.info('Device revoked via API', {
         deviceId,
         reason: body.reason,
-        adminUser: req.user?.sub,
+        adminUser: (req as any).claims?.sub,
       });
 
       res.json({ device, message: 'Device revoked successfully' });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to revoke device', { error: error.message, deviceId: req.params.deviceId });
       
       if (error instanceof z.ZodError) {
@@ -188,11 +188,11 @@ export class DevicesController {
       
       logger.info('Device reactivated via API', {
         deviceId,
-        adminUser: req.user?.sub,
+        adminUser: (req as any).claims?.sub,
       });
 
       res.json({ device, message: 'Device reactivated successfully' });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to reactivate device', { error: error.message, deviceId: req.params.deviceId });
       res.status(500).json({ error: 'Failed to reactivate device' });
     }
@@ -215,7 +215,7 @@ export class DevicesController {
       
       logger.info('Device secret regenerated via API', {
         deviceId,
-        adminUser: req.user?.sub,
+        adminUser: (req as any).claims?.sub,
       });
 
       res.json({
@@ -223,7 +223,7 @@ export class DevicesController {
         deviceSecret: result.deviceSecret,
         warning: 'New device secret will not be shown again. Store it securely.',
       });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Failed to regenerate device secret', { error: error.message, deviceId: req.params.deviceId });
       res.status(500).json({ error: 'Failed to regenerate device secret' });
     }
@@ -253,7 +253,7 @@ export class DevicesController {
           jti: payload.jti,
         }
       });
-    } catch (error) {
+    } catch (error: any) {
       logger.warn('Device proof verification failed', { 
         error: error.message,
         deviceId: req.params.deviceId,

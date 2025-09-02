@@ -2,7 +2,7 @@
 import { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
-import jwt from 'jsonwebtoken';
+import * as jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
@@ -132,6 +132,7 @@ export class DeviceService {
         clientId: true,
         name: true,
         status: true,
+        secretHash: true,
         lastSeenAt: true,
         createdAt: true,
         revokedAt: true,

@@ -33,6 +33,7 @@
     "jose": "^6.1.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "nanoid": "^5.1.5",
     "nodemailer": "^6.9.14",
     "pino": "^9.9.0",
     "pino-http": "^10.5.0",

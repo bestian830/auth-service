@@ -1,7 +1,9 @@
 // src/services/subscriptionPlan.ts
 import { env } from '../config/env.js';
 import { prisma } from '../infra/prisma.js';
-import type { SubscriptionPlan, ProductType } from '../middleware/subscription.js';
+import { audit } from '../middleware/audit.js';
+import type { SubscriptionPlan } from '../middleware/subscription.js';
+import type { ProductType } from '../config/products.js';
 
 /**
  * 获取组织的有效订阅计划
@@ -22,7 +24,7 @@ export async function getEffectivePlanForOrg(
     try {
       const plan = await fetchPlanFromSubscriptionService(orgId, product, locationId);
       if (plan) return plan;
-    } catch (error) {
+    } catch (error: any) {
       console.warn('Subscription service call failed, falling back to local plan:', error.message);
     }
   }
@@ -31,7 +33,7 @@ export async function getEffectivePlanForOrg(
   try {
     const plan = await getLocalPlan(orgId, product, locationId);
     if (plan) return plan;
-  } catch (error) {
+  } catch (error: any) {
     console.warn('Failed to get local plan:', error.message);
   }
   
@@ -56,13 +58,18 @@ async function fetchPlanFromSubscriptionService(
     url.searchParams.set('product', product);
     if (locationId) url.searchParams.set('locationId', locationId);
     
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    
     const response = await fetch(url.toString(), {
       headers: {
         'Authorization': `Bearer ${env.subsServiceToken || ''}`,
         'Content-Type': 'application/json',
       },
-      timeout: 3000, // 3秒超时
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       throw new Error(`Subscription service returned ${response.status}`);
@@ -72,11 +79,23 @@ async function fetchPlanFromSubscriptionService(
     const plan = data.plan;
     
     if (isValidPlan(plan)) {
+      // 成功从远程获取
+      audit('plan_fetch_remote_ok', { orgId, product, plan, locationId });
       return plan;
     }
     
     throw new Error(`Invalid plan returned: ${plan}`);
-  } catch (error) {
+  } catch (error: any) {
+    // 记录远程获取失败
+    const reason = error.name === 'AbortError' ? 'timeout' : 'error';
+    audit('plan_fetch_remote_fail', { 
+      orgId, 
+      product, 
+      reason, 
+      error: error.message,
+      locationId 
+    });
+    
     console.error('Subscription service error:', error);
     return null;
   }
@@ -126,7 +145,7 @@ async function getLocalPlan(
             return plan as SubscriptionPlan;
           }
         }
-      } catch (error) {
+      } catch (error: any) {
         console.warn('Failed to query plan from User table:', error.message);
       }
     }
@@ -149,11 +168,11 @@ async function getLocalPlan(
           return plan as SubscriptionPlan;
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       // Organization 表不存在是正常的，忽略错误
     }
     
-  } catch (error) {
+  } catch (error: any) {
     console.warn('Error querying local plan:', error);
   }
   
@@ -196,7 +215,7 @@ export async function getEffectivePlansForOrgs(
     try {
       const plan = await getEffectivePlanForOrg(request.orgId, request.product, request.locationId);
       results.set(key, plan);
-    } catch (error) {
+    } catch (error: any) {
       console.warn(`Failed to get plan for ${key}:`, error);
       results.set(key, getDefaultPlan(request.product));
     }
