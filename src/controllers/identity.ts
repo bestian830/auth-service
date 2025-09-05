@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
+import * as bcrypt from 'bcryptjs';
 import { prisma } from '../infra/prisma.js';
 import { env } from '../config/env.js';
 import { audit } from '../middleware/audit.js';
@@ -12,7 +12,7 @@ import type { RefreshFamilyRow } from '../types/prisma.js';
 const identityService = new IdentityService();
 
 export async function register(req: Request, res: Response) {
-  const { email, password, subdomain, phone, address } = req.body;
+  const { email, password, name, phone, address } = req.body;
 
   // Always return success to prevent enumeration attacks
   const sendSuccessResponse = () => res.json({ ok: true });
@@ -37,8 +37,7 @@ export async function register(req: Request, res: Response) {
     const { user } = await identityService.createOrReuseUserForSignup({
       email,
       password,
-      tenantId: env.defaultTenantId,
-      subdomain,
+      name,
       phone,
       address
     });
@@ -46,25 +45,24 @@ export async function register(req: Request, res: Response) {
     await identityService.issueEmailVerification(
       user.id,
       'signup',
-      email,
-      user.tenantId
+      email
     );
 
     audit('register_requested', { 
       ip: req.ip, 
       email, 
-      userId: user.id,
-      tenantId: user.tenantId
+      userId: user.id
     });
 
     return sendSuccessResponse();
-  } catch (error: any) {
-    if (error.message === 'subdomain_taken') {
-      audit('register_subdomain_conflict', { ip: req.ip, email, subdomain });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    if (errorMessage === 'subdomain_taken') {
+      audit('register_name_conflict', { ip: req.ip, email });
       return res.status(409).json({ error: 'subdomain_taken' });
     }
 
-    audit('register_error', { ip: req.ip, email, error: error.message });
+    audit('register_error', { ip: req.ip, email, error: errorMessage });
     return res.status(500).json({ error: 'server_error' });
   }
 }
@@ -96,7 +94,7 @@ export async function verify(req: Request, res: Response) {
     });
 
     res.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     const errorMap: Record<string, { status: number; error: string }> = {
       'invalid_code': { status: 400, error: 'invalid_code' },
       'code_already_used': { status: 400, error: 'code_already_used' },
@@ -104,12 +102,13 @@ export async function verify(req: Request, res: Response) {
       'too_many_attempts': { status: 429, error: 'too_many_attempts' }
     };
 
-    const errorInfo = errorMap[error.message] || { status: 500, error: 'server_error' };
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    const errorInfo = errorMap[errorMessage] || { status: 500, error: 'server_error' };
     
     audit('verify_failed', { 
       ip: req.ip, 
       email, 
-      reason: error.message 
+      reason: errorMessage 
     });
 
     res.status(errorInfo.status).json({ error: errorInfo.error });
@@ -135,18 +134,18 @@ export async function login(req: Request, res: Response) {
     // Always record login attempt for tracking
     const loginAttemptData: {
       userId?: string;
-      email: any;
-      tenantId: string;
+      email: string;
+      organizationId?: string | null;
       ipAddress: string;
-      userAgent: string;
+      userAgent?: string | null;
       success: boolean;
       failureReason: string | null;
       captchaUsed: boolean;
     } = {
       email,
-      tenantId: user?.tenantId || env.defaultTenantId,
+      organizationId: null, // In simplified architecture, organization is unknown at login
       ipAddress: ip,
-      userAgent,
+      userAgent: userAgent || null,
       success: false,
       failureReason: null,
       captchaUsed: !!captcha
@@ -346,21 +345,19 @@ export async function login(req: Request, res: Response) {
     // Store user info in session for OIDC flow
     req.session = req.session || {};
     req.session.userId = user.id;
-    req.session.tenantId = user.tenantId;
     req.session.email = user.email;
-    req.session.roles = user.roles;
     
     audit('login_success', { 
       ip, 
       email, 
-      userId: user.id, 
-      tenantId: user.tenantId,
+      userId: user.id,
       captchaUsed: !!captcha
     });
     
     res.json({ ok: true });
-  } catch (error: any) {
-    audit('login_error', { ip, email, error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    audit('login_error', { ip, email, error: errorMessage });
     res.status(500).json({ error: 'server_error' });
   }
 }
@@ -409,12 +406,13 @@ export async function captchaStatus(req: Request, res: Response) {
       captcha_site_key: env.captchaEnabled ? env.captchaSiteKey : null,
       threshold: env.loginCaptchaThreshold
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
     console.error('CAPTCHA status error:', error);
     audit('captcha_status_error', {
       ip,
       email: email as string,
-      error: error.message
+      error: errorMessage
     });
     
     res.json({
@@ -435,7 +433,7 @@ export async function logout(req: Request, res: Response) {
       const userTokens = await prisma.refreshToken.findMany({
         where: {
           subjectUserId: userId,
-          status: 'active'
+          status: 'ACTIVE'
         },
         select: { familyId: true }
       }) as RefreshFamilyRow[];
@@ -489,7 +487,7 @@ export async function forgotPassword(req: Request, res: Response) {
       return sendSuccessResponse();
     }
 
-    await identityService.issuePasswordReset(user.id, email, user.tenantId);
+    await identityService.issuePasswordReset(user.id, email);
 
     audit('reset_requested', { 
       ip: req.ip, 
@@ -498,8 +496,9 @@ export async function forgotPassword(req: Request, res: Response) {
     });
 
     return sendSuccessResponse();
-  } catch (error: any) {
-    audit('reset_error', { ip: req.ip, email, error: error.message });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    audit('reset_error', { ip: req.ip, email, error: errorMessage });
     return sendSuccessResponse(); // Still return success to prevent info disclosure
   }
 }
@@ -521,7 +520,7 @@ export async function resetPassword(req: Request, res: Response) {
     });
 
     res.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     const errorMap: Record<string, { status: number; error: string }> = {
       'invalid_code': { status: 400, error: 'invalid_code' },
       'code_already_used': { status: 400, error: 'code_already_used' },
@@ -529,11 +528,12 @@ export async function resetPassword(req: Request, res: Response) {
       'too_many_attempts': { status: 429, error: 'too_many_attempts' }
     };
 
-    const errorInfo = errorMap[error.message] || { status: 500, error: 'server_error' };
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    const errorInfo = errorMap[errorMessage] || { status: 500, error: 'server_error' };
     
     audit('password_reset_failed', { 
       ip: req.ip, 
-      reason: error.message 
+      reason: errorMessage 
     });
 
     res.status(errorInfo.status).json({ error: errorInfo.error });
@@ -552,13 +552,11 @@ export async function getProfile(req: Request, res: Response) {
       select: {
         id: true,
         email: true,
-        subdomain: true,
+        name: true,
         phone: true,
         address: true,
-        storeType: true,
         emailVerifiedAt: true,
-        createdAt: true,
-        roles: true
+        createdAt: true
       }
     });
 
@@ -567,11 +565,12 @@ export async function getProfile(req: Request, res: Response) {
     }
 
     res.json(user);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
     audit('profile_fetch_error', { 
       ip: req.ip, 
       userId: (req as any).claims?.sub, 
-      error: error.message 
+      error: errorMessage 
     });
     res.status(500).json({ error: 'server_error' });
   }
@@ -584,11 +583,11 @@ export async function updateProfile(req: Request, res: Response) {
       return res.status(401).json({ error: 'unauthorized' });
     }
 
-    const { email, subdomain, phone, address } = req.body;
+    const { email, name, phone, address } = req.body;
     
     const updatedUser = await identityService.updateUserProfile(userId, {
       email,
-      subdomain,
+      name,
       phone,
       address
     });
@@ -596,7 +595,7 @@ export async function updateProfile(req: Request, res: Response) {
     audit('profile_updated', { 
       ip: req.ip, 
       userId,
-      changes: { email, subdomain, phone: !!phone, address: !!address }
+      changes: { email, name, phone: !!phone, address: !!address }
     });
 
     // Return updated profile (excluding sensitive fields)
@@ -605,29 +604,28 @@ export async function updateProfile(req: Request, res: Response) {
       select: {
         id: true,
         email: true,
-        subdomain: true,
+        name: true,
         phone: true,
         address: true,
-        storeType: true,
         emailVerifiedAt: true,
-        createdAt: true,
-        roles: true
+        createdAt: true
       }
     });
 
     res.json(profile);
-  } catch (error: any) {
+  } catch (error: unknown) {
     const errorMap: Record<string, { status: number; error: string }> = {
       'email_taken': { status: 409, error: 'email_taken' },
       'subdomain_taken': { status: 409, error: 'subdomain_taken' }
     };
 
-    const errorInfo = errorMap[error.message] || { status: 500, error: 'server_error' };
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    const errorInfo = errorMap[errorMessage] || { status: 500, error: 'server_error' };
     
     audit('profile_update_failed', { 
       ip: req.ip, 
       userId: (req as any).claims?.sub,
-      reason: error.message 
+      reason: errorMessage 
     });
 
     res.status(errorInfo.status).json({ error: errorInfo.error });
@@ -656,18 +654,19 @@ export async function changePassword(req: Request, res: Response) {
     });
 
     res.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     const errorMap: Record<string, { status: number; error: string }> = {
       'user_not_found': { status: 404, error: 'user_not_found' },
       'invalid_current_password': { status: 400, error: 'invalid_current_password' }
     };
 
-    const errorInfo = errorMap[error.message] || { status: 500, error: 'server_error' };
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    const errorInfo = errorMap[errorMessage] || { status: 500, error: 'server_error' };
     
     audit('change_password_failed', { 
       ip: req.ip, 
       userId: (req as any).claims?.sub,
-      reason: error.message 
+      reason: errorMessage 
     });
 
     res.status(errorInfo.status).json({ error: errorInfo.error });

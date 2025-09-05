@@ -4,14 +4,12 @@ import { env } from '../config/env.js';
 import { buildJwksWithEtag, ensureOneActiveKey } from '../infra/keystore.js';
 import { prisma } from '../infra/prisma.js';
 import { issueRefreshFamily, rotateRefreshToken, revokeFamilyByOldReuse, signAccessToken, signIdToken } from '../services/token.js';
-import { validateClientTenantAccess } from '../services/tenant.js';
 import { audit } from '../middleware/audit.js';
 import { importJWK, jwtVerify } from 'jose';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { deviceService } from '../services/device.js';
 import { jtiCache } from '../infra/redis.js';
-import { resolveProductType, getUnknownProductStrategy, type ProductType } from '../config/products.js';
 import { authenticateClient, validateGrantType } from '../services/clientAuth.js';
 
 // ===== Discovery =====
@@ -112,8 +110,8 @@ export async function postLogin(req: Request, res: Response){
   }
   
   // 写入轻量 session（假设你已有 session 中间件；若没有，用签名 cookie）
-  (req as any).session = { user: { id: u.id, email: u.email, tenantId: u.tenantId, roles: u.roles }};
-  audit('login_success', { email, userId: u.id, tenantId: u.tenantId });
+  (req as any).session = { user: { id: u.id, email: u.email }};
+  audit('login_success', { email, userId: u.id });
   
   const redirect = return_to || '/';
   return res.redirect(302, redirect);
@@ -179,7 +177,6 @@ export async function getAuthorize(req: Request, res: Response){
       state: (state || '').toString(),
       nonce: (nonce || '').toString(),
       subjectUserId: u.id,
-      tenantId: u.tenantId,
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 5*60*1000),
       used: false
@@ -230,7 +227,7 @@ export async function token(req: Request, res: Response){
       // ✅ 必修1：授权码绑定校验，防止换绑/窃用
       if (c.clientId !== clientId || c.redirectUri !== redirect_uri) {
         audit('token_denied', {
-          clientId, tenantId: c.tenantId, reason: 'code_binding_mismatch'
+          clientId, organizationId: c.organizationId, reason: 'code_binding_mismatch'
         });
         return res.status(400).json({ error: 'invalid_grant' });
       }
@@ -241,40 +238,53 @@ export async function token(req: Request, res: Response){
       if (c.codeChallengeMethod !== 'S256' || challenge !== c.codeChallenge){
         return res.status(400).json({ error: 'invalid_grant' });
       }
-      // ✅ 标准化一个可用的 clientId
-      const resolvedClientId: string = clientId!;
+      // Get user with organization info
+      const user = await prisma.user.findUnique({
+        where: { id: c.subjectUserId! },
+        include: {
+          userRoles: {
+            where: { status: 'ACTIVE' },
+            include: { organization: true }
+          }
+        }
+      });
       
-      // 强校验：clientId 是否允许在该 tenant 下使用
-      const isClientAllowed = await validateClientTenantAccess(resolvedClientId, c.tenantId!);
-      if (!isClientAllowed) {
-        audit('token_denied', { clientId: resolvedClientId, tenantId: c.tenantId, reason: 'unauthorized_client_tenant' });
-        return res.status(401).json({ error: 'unauthorized_client_tenant' });
+      if (!user) {
+        return res.status(400).json({ error: 'invalid_grant' });
       }
       
-      // 多租户与受众：从 TenantClient 上下文兜底 aud
-      const tc = await prisma.tenantClient.findFirst({ where: { clientId: resolvedClientId, tenantId: c.tenantId || undefined }});
-      const aud = tc?.defaultAud ?? `${env.defaultAudPrefix}:${c.tenantId}`;
+      // Get first active organization (simplified approach)
+      const activeRole = user.userRoles.find(ur => ur.organization.status === 'ACTIVE');
+      const organizationId = activeRole?.organizationId || undefined;
+      
       const scopes = (c.scope || '').split(/\s+/).filter(Boolean);
       
       // 发 RT 家族
-      const { refreshId } = await issueRefreshFamily({ userId: c.subjectUserId!, clientId: resolvedClientId, tenantId: c.tenantId! });
+      const { refreshId } = await issueRefreshFamily({ 
+        userId: c.subjectUserId!, 
+        clientId: clientId!, 
+        organizationId 
+      });
 
-      // AT 面向 API（aud = API 受众）
+      // AT 面向 API
       const at = await signAccessToken({
-        sub: c.subjectUserId!, tenant_id: c.tenantId!, roles: [], scopes, aud
+        sub: c.subjectUserId!, 
+        roles: activeRole ? [activeRole.role] : [], 
+        scopes, 
+        organizationId
       });
       
-      // ✅ 必修2&3：ID Token 面向客户端 aud=clientId，并包含 nonce（若存在）
+      // ID Token 面向客户端
       const idToken = await signIdToken({
         sub: c.subjectUserId!, 
-        tenant_id: c.tenantId!, 
-        aud: resolvedClientId, 
+        organizationId,
+        aud: clientId!, 
         nonce: c.nonce || undefined
       });
 
       await prisma.authorizationCode.update({ where: { id: code }, data: { used: true, usedAt: new Date() }});
       
-      audit('token_issue', { clientId: resolvedClientId, userId: c.subjectUserId, grantType: grant_type });
+      audit('token_issue', { clientId: clientId!, userId: c.subjectUserId, grantType: grant_type });
 
       return res.json({
         access_token: at,
@@ -290,39 +300,9 @@ export async function token(req: Request, res: Response){
       try{
         const rotated = await rotateRefreshToken(refresh_token);
         
-        // v0.2.8: Device proof validation - 仅 mopai 强制，ploml 可选记录
         let deviceId: string | null = null;
-        let productType = await resolveProductType(rotated.clientId);
-        
-        // 处理 unknown 产品类型
-        if (productType === 'unknown') {
-          const strategy = getUnknownProductStrategy();
-          audit('unknown_product_type', {
-            clientId: rotated.clientId,
-            strategy,
-            ip: req.ip
-          });
-          
-          if (strategy === 'reject') {
-            return res.status(400).json({ error: 'unsupported_client_product' });
-          }
-          
-          productType = strategy; // 使用默认策略
-        }
-        
-        const requiresProof = deviceService.isDeviceProofRequired(rotated.clientId);
 
-        if (requiresProof && !device_proof) {
-          audit('token_refresh_failed', { 
-            refreshTokenId: refresh_token, 
-            clientId: rotated.clientId,
-            productType,
-            reason: 'device_proof_required' 
-          });
-          return res.status(400).json({ error: 'device_proof_required' });
-        }
-
-        // 处理设备证明（强制或可选）
+        // Optional device proof validation
         if (device_proof) {
           try {
             // Extract device_id from device_proof JWT
@@ -338,243 +318,84 @@ export async function token(req: Request, res: Response){
             const proofPayload = await deviceService.verifyDeviceProof(deviceId, device_proof);
             
             // Check JTI for replay protection
-            if (env.jtiCacheEnabledProducts.split(',').some(p => rotated.clientId.includes(p.trim()))) {
-              const jtiExists = await jtiCache.exists(proofPayload.jti);
-              if (jtiExists) {
-                audit('token_refresh_failed', { 
-                  refreshTokenId: refresh_token,
-                  deviceId,
-                  productType,
-                  jti: proofPayload.jti,
-                  reason: 'jti_replay' 
-                });
-                return res.status(400).json({ error: 'device_proof_replay' });
-              }
-              
-              // Cache JTI to prevent replay
-              await jtiCache.set(proofPayload.jti, '1', env.jtiCacheTtlSec);
-            }
-            
-            audit('device_proof_verified', {
-              deviceId,
-              productType,
-              jti: proofPayload.jti,
-              required: requiresProof
-            });
-            
-          } catch (error: any) {
-            if (requiresProof) {
+            const jtiExists = await jtiCache.exists(proofPayload.jti);
+            if (jtiExists) {
               audit('token_refresh_failed', { 
                 refreshTokenId: refresh_token,
                 deviceId,
-                productType,
-                reason: 'invalid_device_proof',
-                error: error.message
+                jti: proofPayload.jti,
+                reason: 'jti_replay' 
               });
-              return res.status(401).json({ error: 'invalid_device_proof' });
-            } else {
-              // ploml 可选记录，不阻止请求
-              audit('device_proof_failed', {
-                refreshTokenId: refresh_token,
-                deviceId,
-                productType,
-                reason: 'optional_proof_invalid',
-                error: error.message
-              });
+              return res.status(400).json({ error: 'device_proof_replay' });
+            }
+            
+            // Cache JTI to prevent replay
+            await jtiCache.set(proofPayload.jti, '1', env.jtiCacheTtlSec);
+            
+            audit('device_proof_verified', {
+              deviceId,
+              jti: proofPayload.jti
+            });
+            
+          } catch (error: any) {
+            audit('device_proof_failed', {
+              refreshTokenId: refresh_token,
+              deviceId,
+              reason: 'invalid_device_proof',
+              error: error.message
+            });
+            // Continue without failing - device proof is optional
+          }
+        }
+        
+        // Get user and organization info
+        let organizationId: string | undefined = undefined;
+        let roles: string[] = [];
+        
+        if (rotated.subject.userId) {
+          const user = await prisma.user.findUnique({ 
+            where: { id: rotated.subject.userId },
+            include: {
+              userRoles: {
+                where: { status: 'ACTIVE' },
+                include: { organization: true }
+              }
+            }
+          });
+          
+          if (user) {
+            const activeRole = user.userRoles.find(ur => ur.organization.status === 'ACTIVE');
+            if (activeRole) {
+              organizationId = activeRole.organizationId;
+              roles = [activeRole.role];
             }
           }
         }
         
-        // 从用户信息获取真实的tenant_id
-        let tenantId: string | null = null;
-        if (rotated.subject.userId) {
-          const user = await prisma.user.findUnique({ 
-            where: { id: rotated.subject.userId },
-            select: { tenantId: true }
-          });
-          tenantId = user?.tenantId ?? null;
-        }
-        
-        if (!tenantId) {
-          audit('token_refresh_failed', { refreshTokenId: refresh_token, reason: 'no_tenant_found' });
-          return res.status(400).json({ error: 'invalid_refresh_subject' });
-        }
-        
-        // v0.2.8-p2: Apply product-specific refresh strategy (天/小时单位)
-        let finalRefreshToken = rotated.newId;
-        let shouldRotate = false;
-        let strategyParams = {};
-
-        if (productType === 'mopai') {
-          // Mopai 策略参数（转换为秒）
-          const slidingExtendSec = env.mopaiRefreshSlidingDays * 24 * 3600;
-          const rotationThresholdSec = env.mopaiRotateThresholdHours * 3600;
-          const inactivityTimeoutSec = env.mopaiInactivityLogoutDays * 24 * 3600;
-          
-          strategyParams = { 
-            slidingDays: env.mopaiRefreshSlidingDays,
-            rotateHours: env.mopaiRotateThresholdHours,
-            inactivityDays: env.mopaiInactivityLogoutDays
-          };
-
-          // 检查不活跃超时（仅 mopai 生效）
-          const lastSeenTime = rotated.lastSeenAt || rotated.rotatedAt || rotated.createdAt;
-          const inactivityDeadline = new Date(lastSeenTime.getTime() + inactivityTimeoutSec * 1000);
-          if (new Date() > inactivityDeadline) {
-            audit('refresh_inactive_logout', { 
-              refreshTokenId: refresh_token,
-              product: productType,
-              lastSeen: lastSeenTime,
-              inactivityDays: env.mopaiInactivityLogoutDays,
-              userId: rotated.subject.userId,
-              deviceId: rotated.subject.deviceId
-            });
-            return res.status(401).json({ error: 'refresh_token_inactive' });
-          }
-
-          // 检查是否达到轮转阈值
-          const timeSinceLastRotation = Date.now() - (rotated.rotatedAt || rotated.createdAt).getTime();
-          shouldRotate = timeSinceLastRotation > (rotationThresholdSec * 1000);
-
-          if (shouldRotate) {
-            // 轮转时更新 lastSeenAt
-            await prisma.refreshToken.update({
-              where: { id: refresh_token },
-              data: { lastSeenAt: new Date() }
-            });
-            
-            audit('refresh_rotate', {
-              refreshTokenId: refresh_token,
-              newRefreshTokenId: rotated.newId,
-              product: productType,
-              rotateHours: env.mopaiRotateThresholdHours,
-              userId: rotated.subject.userId,
-              deviceId: rotated.subject.deviceId
-            });
-          } else {
-            // 滑动续期：延长现有令牌
-            const extendedExpiry = new Date(Date.now() + slidingExtendSec * 1000);
-            
-            await prisma.refreshToken.update({
-              where: { id: refresh_token },
-              data: { 
-                expiresAt: extendedExpiry,
-                lastSeenAt: new Date()
-              }
-            });
-            
-            finalRefreshToken = refresh_token; // Keep same token
-            
-            audit('refresh_sliding', {
-              refreshTokenId: refresh_token,
-              product: productType,
-              slidingDays: env.mopaiRefreshSlidingDays,
-              newExpiry: extendedExpiry,
-              userId: rotated.subject.userId,
-              deviceId: rotated.subject.deviceId
-            });
-          }
-        } else if (productType === 'ploml') {
-          // Ploml 策略参数（转换为秒）
-          const slidingExtendSec = env.plomlRefreshSlidingDays * 24 * 3600;
-          const rotationThresholdSec = env.plomlRotateThresholdHours * 3600;
-          const maxLifetimeSec = env.plomlRefreshHardLimitDays * 24 * 3600;
-          
-          strategyParams = { 
-            slidingDays: env.plomlRefreshSlidingDays,
-            rotateHours: env.plomlRotateThresholdHours,
-            hardLimitDays: env.plomlRefreshHardLimitDays
-          };
-
-          // 检查硬上限
-          const tokenAge = Date.now() - rotated.createdAt.getTime();
-          if (tokenAge > (maxLifetimeSec * 1000)) {
-            audit('token_refresh_failed', { 
-              refreshTokenId: refresh_token,
-              product: productType,
-              reason: 'max_lifetime_exceeded',
-              tokenAgeDays: Math.floor(tokenAge / (24 * 3600 * 1000)),
-              hardLimitDays: env.plomlRefreshHardLimitDays,
-              userId: rotated.subject.userId
-            });
-            return res.status(401).json({ error: 'refresh_token_expired' });
-          }
-
-          // 检查轮转阈值
-          const lastRefreshTime = rotated.rotatedAt || rotated.createdAt;
-          const timeSinceLastRotation = Date.now() - lastRefreshTime.getTime();
-          shouldRotate = timeSinceLastRotation > (rotationThresholdSec * 1000);
-
-          if (shouldRotate) {
-            // Ploml 轮转时也更新 lastSeenAt
-            await prisma.refreshToken.update({
-              where: { id: refresh_token },
-              data: { lastSeenAt: new Date() }
-            });
-            
-            audit('refresh_rotate', {
-              refreshTokenId: refresh_token,
-              newRefreshTokenId: rotated.newId,
-              product: productType,
-              rotateHours: env.plomlRotateThresholdHours,
-              userId: rotated.subject.userId
-            });
-          } else {
-            // Ploml 滑动续期（如果配置为此模式）
-            const extendedExpiry = new Date(Date.now() + slidingExtendSec * 1000);
-            const maxLifetime = new Date(rotated.createdAt.getTime() + maxLifetimeSec * 1000);
-            const finalExpiry = extendedExpiry < maxLifetime ? extendedExpiry : maxLifetime;
-            
-            await prisma.refreshToken.update({
-              where: { id: refresh_token },
-              data: { 
-                expiresAt: finalExpiry,
-                lastSeenAt: new Date()
-              }
-            });
-            
-            finalRefreshToken = refresh_token; // Keep same token
-            
-            audit('refresh_sliding', {
-              refreshTokenId: refresh_token,
-              product: productType,
-              slidingDays: env.plomlRefreshSlidingDays,
-              newExpiry: finalExpiry,
-              userId: rotated.subject.userId
-            });
-          }
-        }
-        
-        // 根据租户计算受众（避免跨租户误发）
-        const aud = `${env.defaultAudPrefix}:${tenantId}`;
-        
         const at = await signAccessToken({
           sub: (rotated.subject.userId ?? rotated.subject.deviceId)!,
-          tenant_id: tenantId,
-          roles: [], // 刷新场景通常不扩权
-          scopes: [], // 刷新场景通常不扩权
-          device_id: deviceId ?? rotated.subject.deviceId ?? null,
-          aud
+          roles,
+          scopes: [],
+          organizationId,
+          deviceId: deviceId ?? rotated.subject.deviceId ?? null
         });
         
         audit('token_refresh', { 
           refreshTokenId: refresh_token, 
-          newRefreshTokenId: finalRefreshToken, 
-          tenantId,
+          newRefreshTokenId: rotated.newId, 
+          organizationId,
           deviceId,
-          productType,
-          rotated: shouldRotate,
-          ...strategyParams
+          userId: rotated.subject.userId
         });
         
         return res.json({
           access_token: at,
           token_type: 'Bearer',
           expires_in: Number(env.accessTtlSec),
-          refresh_token: finalRefreshToken
+          refresh_token: rotated.newId
         });
       }catch(e:any){
-        if (e?.code === 'reuse') {            // 只有"复用"才全家族封禁
+        if (e?.code === 'reuse') {
           await revokeFamilyByOldReuse(refresh_token);
           audit('refresh_reuse', { refreshTokenId: refresh_token });
           return res.status(401).json({ error: 'invalid_refresh_token' });
@@ -598,7 +419,7 @@ export async function token(req: Request, res: Response){
 export async function userinfo(req: Request, res: Response){
   // 由 requireBearer 验证并注入的 claims
   const claims = (req as any).claims || {};
-  const { sub, tenant_id, roles, scopes = [], acr } = claims;
+  const { sub, organizationId, roles, scopes = [], acr } = claims;
 
   const s: string[] = Array.isArray(scopes) ? scopes : [];
   if (!s.includes('openid')) {
@@ -607,7 +428,7 @@ export async function userinfo(req: Request, res: Response){
 
   res.json({
     sub,
-    tenant_id,
+    organizationId,
     roles: roles ?? [],
     scopes: s,
     acr: acr ?? 'normal'
@@ -658,7 +479,7 @@ export async function revoke(req: Request, res: Response){
   // Revoke the entire family
   await prisma.refreshToken.updateMany({
     where: { familyId: tokenRecord.familyId },
-    data: { status: 'revoked', revokedAt: new Date(), revokeReason: 'manual_revoke' }
+    data: { status: 'REVOKED', revokedAt: new Date(), revokeReason: 'manual_revoke' }
   });
   
   audit('revoke', { 
@@ -714,7 +535,7 @@ export async function introspect(req: Request, res: Response){
       select: { publicJwk: true, status: true }
     });
     
-    if (!keyRecord || keyRecord.status === 'retired') {
+    if (!keyRecord || keyRecord.status === 'RETIRED') {
       audit('introspect', { clientId: cid, kid, result: 'key_not_found_or_retired' });
       return res.json({ active: false });
     }
@@ -737,7 +558,7 @@ export async function introspect(req: Request, res: Response){
       exp: decoded.exp,
       jti: decoded.jti,
       scope: Array.isArray((decoded as any).scopes) ? (decoded as any).scopes.join(' ') : undefined,
-      tenant_id: (decoded as any).tenant_id,
+      organizationId: (decoded as any).organizationId,
       acr: (decoded as any).acr
     });
 

@@ -7,35 +7,148 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ===== 核心身份管理模型 =====
+
 model User {
   id                         String   @id @default(uuid())
-  tenantId                   String
   email                      String   @unique
   passwordHash               String
-  // 可选资料
+  
+  // 基本信息
+  name                       String?
   phone                      String?  @db.VarChar(32)
   address                    String?  @db.VarChar(255)
-  subdomain                  String?  @unique
-  // 业务类型（仅管理员可改）
-  storeType                  StoreType @default(UNKNOWN)
   
   // 账号状态
   emailVerifiedAt            DateTime?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
   
-  // v0.2.6 Login failure tracking and lockout
+  // 安全相关
   loginFailureCount          Int      @default(0)
   lastLoginFailureAt         DateTime?
   lockedUntil                DateTime?
   lockReason                 String?  // "max_failures" | "security_violation"
   
-  roles                      String[] @default([])
-  
-  // Relations
+  // 关系
   emailVerifications         EmailVerification[]
   passwordResets             PasswordReset[]
   loginAttempts              LoginAttempt[]
+  userRoles                  UserRole[]
+  ownedOrganizations         Organization[] @relation("OrganizationOwner")
+}
+
+model Organization {
+  id                String   @id @default(uuid())
+  name              String
+  ownerId           String   // 创建者/老板
+  
+  // 基本信息
+  description       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // 状态
+  status            OrganizationStatus @default(ACTIVE)
+  
+  // 关系
+  owner             User       @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  userRoles         UserRole[]
+  devices           Device[]
+  
+  @@index([ownerId])
+  @@index([status])
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+model UserRole {
+  id             String   @id @default(uuid())
+  userId         String
+  organizationId String
+  role           Role     @default(EMPLOYEE)
+  
+  // 状态管理
+  status         UserRoleStatus @default(ACTIVE)
+  joinedAt       DateTime @default(now())
+  leftAt         DateTime?
+  
+  // 关系
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([status])
+}
+
+enum Role {
+  OWNER      // 老板
+  MANAGER    // 经理
+  EMPLOYEE   // 员工
+}
+
+enum UserRoleStatus {
+  ACTIVE
+  SUSPENDED
+  LEFT
+}
+
+model Device {
+  id             String   @id @default(uuid())
+  name           String?
+  organizationId String
+  type           DeviceType
+  
+  // 设备认证
+  clientId       String   // OAuth客户端ID
+  secretHash     String?  // 设备密钥哈希
+  publicJwk      Json?    // 预留DPoP公钥
+  
+  // 状态管理
+  status         DeviceStatus @default(ACTIVE)
+  lastSeenAt     DateTime?
+  createdAt      DateTime @default(now())
+  revokedAt      DateTime?
+  note           String?
+  
+  // 关系
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  @@index([organizationId])
+  @@index([clientId])
+  @@index([status])
+}
+
+enum DeviceType {
+  HOST           // 主机/POS机
+  KIOSK          // 自助终端
+  MOBILE         // 移动设备
+}
+
+enum DeviceStatus {
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+// ===== OAuth2/OIDC 相关模型 =====
+
+model Client {
+  id           String   @id @default(cuid())
+  clientId     String   @unique
+  name         String?
+  type         ClientType @default(PUBLIC)
+  secretHash   String?
+  authMethod   TokenEndpointAuthMethod @default(none)
+  redirectUris String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 enum ClientType {
@@ -49,38 +162,6 @@ enum TokenEndpointAuthMethod {
   client_secret_post
 }
 
-model Client {
-  id           String   @id @default(cuid())  // internal id
-  clientId     String   @unique               // oauth client_id  
-  name         String?
-  type         ClientType @default(PUBLIC)
-  secretHash   String?                       // 仅 CONFIDENTIAL 需要
-  authMethod   TokenEndpointAuthMethod @default(none)
-  redirectUris String[]                      // allowed redirect URIs
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-}
-
-model RefreshToken {
-  id               String   @id
-  familyId         String
-  subjectUserId    String?
-  subjectDeviceId  String?
-  clientId         String
-  status           String   @default("active") // active|rotated|revoked
-  createdAt        DateTime @default(now())
-  expiresAt        DateTime
-  rotatedAt        DateTime?
-  revokedAt        DateTime?
-  revokeReason     String?
-  lastSeenAt       DateTime @default(now()) // v0.2.8-p1: 用于不活跃超时判断
-
-  @@index([familyId])
-  @@index([subjectUserId])
-  @@index([status])
-  @@index([lastSeenAt])
-}
-
 model AuthorizationCode {
   id                   String   @id @default(uuid())
   clientId             String
@@ -90,8 +171,13 @@ model AuthorizationCode {
   scope                String?
   state                String?
   nonce                String?
+  
+  // 主体信息
   subjectUserId        String?
-  tenantId             String?
+  subjectDeviceId      String?
+  organizationId       String?  // 上下文组织
+  
+  // 生命周期
   createdAt            DateTime @default(now())
   expiresAt            DateTime
   used                 Boolean  @default(false)
@@ -102,11 +188,41 @@ model AuthorizationCode {
   @@index([expiresAt])
 }
 
+model RefreshToken {
+  id               String   @id
+  familyId         String
+  subjectUserId    String?
+  subjectDeviceId  String?
+  clientId         String
+  organizationId   String?  // 令牌关联的组织
+  
+  status           RefreshTokenStatus @default(ACTIVE)
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime
+  rotatedAt        DateTime?
+  revokedAt        DateTime?
+  revokeReason     String?
+  lastSeenAt       DateTime @default(now())
+
+  @@index([familyId])
+  @@index([subjectUserId])
+  @@index([status])
+  @@index([lastSeenAt])
+}
+
+enum RefreshTokenStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
+}
+
+// ===== 密钥管理 =====
+
 model Key {
   kid          String   @id
   type         String   // 'RSA'
-  status       String   // 'active' | 'grace' | 'retired'
-  privatePem   String   // PKCS8 PEM（开发期可明文；生产建议加密）
+  status       KeyStatus
+  privatePem   String   // 加密存储的私钥
   publicJwk    Json
   createdAt    DateTime @default(now())
   activatedAt  DateTime?
@@ -115,61 +231,45 @@ model Key {
   @@index([status])
 }
 
-model TenantClient {
-  id                 String   @id @default(uuid())
-  clientId           String
-  tenantId           String
-  allowedAudPrefixes String[] // 例如: ["tymoe-service:mopai", "tymoe-service:ploml"]
-  allowedScopes      String[] // 例如: ["openid","profile"]
-  defaultAud         String?  // 例如: "tymoe-service:mopai:tenant-dev"
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  @@unique([clientId, tenantId])
+enum KeyStatus {
+  ACTIVE
+  GRACE
+  RETIRED
 }
 
-enum StoreType {
-  UNKNOWN
-  FRANCHISE // 加盟店
-  BRANCH    // 分店
-  DIRECT    // 直营店
-}
+// ===== 身份验证相关 =====
 
 model EmailVerification {
   id          String   @id @default(uuid())
   userId      String
-  tenantId    String
-  // "验证码"不明文存储：selector + hashedToken 最佳（避免库泄露）
   selector    String   @unique
   tokenHash   String
-  purpose     String   // "signup" | "change_email" ...
+  purpose     String   // "signup" | "email_change"
   sentTo      String
   expiresAt   DateTime
   consumedAt  DateTime?
   attempts    Int      @default(0)
   createdAt   DateTime @default(now())
   
-  // v0.2.6 10-minute code reuse tracking
+  // 重发控制
   reuseWindowExpiresAt DateTime?
   lastSentAt           DateTime @default(now())
   resendCount          Int      @default(0)
   
-  // v0.2.7: short-lived encrypted code reuse
-  tokenEnc    String?  // base64(ciphertext)
-  iv          String?  // base64(12 bytes)
-  tag         String?  // base64(16 bytes)
+  // 加密存储
+  tokenEnc    String?
+  iv          String?
+  tag         String?
   
   user        User     @relation(fields: [userId], references: [id])
   
   @@index([userId])
   @@index([expiresAt])
-  @@index([reuseWindowExpiresAt])
 }
 
 model PasswordReset {
   id          String   @id @default(uuid())
   userId      String
-  tenantId    String
   selector    String   @unique
   tokenHash   String
   sentTo      String
@@ -178,32 +278,31 @@ model PasswordReset {
   attempts    Int      @default(0)
   createdAt   DateTime @default(now())
   
-  // v0.2.6 10-minute code reuse tracking
+  // 重发控制
   reuseWindowExpiresAt DateTime?
   lastSentAt           DateTime @default(now())
   resendCount          Int      @default(0)
   
-  // v0.2.7: short-lived encrypted code reuse
-  tokenEnc    String?  // base64(ciphertext)
-  iv          String?  // base64(12 bytes)
-  tag         String?  // base64(16 bytes)
+  // 加密存储
+  tokenEnc    String?
+  iv          String?
+  tag         String?
   
   user        User     @relation(fields: [userId], references: [id])
   
   @@index([userId])
   @@index([expiresAt])
-  @@index([reuseWindowExpiresAt])
 }
 
 model LoginAttempt {
   id             String   @id @default(uuid())
-  userId         String?  // null for non-existent users (anti-enumeration)
+  userId         String?
   email          String
-  tenantId       String
+  organizationId String?  // 登录上下文组织
   ipAddress      String
   userAgent      String?
   success        Boolean
-  failureReason  String?  // "invalid_password" | "account_locked" | "captcha_required" | "captcha_failed"
+  failureReason  String?
   captchaUsed    Boolean  @default(false)
   attemptAt      DateTime @default(now())
   
@@ -216,33 +315,19 @@ model LoginAttempt {
   @@index([success])
 }
 
+// ===== 审计日志 =====
+
 model AuditLog {
   id          String   @id @default(uuid())
   at          DateTime @default(now())
   ip          String?
   userAgent   String?
   actorUserId String?
-  action      String   // login_success / login_fail / authorize / token_issue / token_refresh / refresh_reuse / revoke / introspect / jwks_rotate / jwks_retire …
-  subject     String?  // token_id / code_id / client_id / tenant_id …
+  action      String
+  subject     String?
   detail      Json?
-}
-
-model Device {
-  id          String   @id @default(uuid())
-  orgId       String
-  locationId  String?    // 可为空；后续可用于精确到店
-  type        String     // 'host' | 'kiosk'
-  clientId    String     // 使用的 OAuth client_id（区分 web-mopai/kiosk-mopai）
-  name        String?
-  status      String   @default("active") // active | revoked
-  secretHash  String?   // device_secret 的哈希；DPoP 模式可为空
-  publicJwk   Json?     // 预留 DPoP
-  lastSeenAt  DateTime?
-  createdAt   DateTime @default(now())
-  revokedAt   DateTime?
-  note        String?
-
-  @@index([orgId])
-  @@index([clientId])
-  @@index([status])
+  
+  @@index([actorUserId])
+  @@index([action])
+  @@index([at])
 }

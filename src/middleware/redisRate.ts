@@ -105,9 +105,9 @@ export function createDualRateLimiter(options: DualRateLimitOptions) {
 
 // Pre-configured dual rate limiter for login attempts (using new hourly config)
 export const dualLoginRateLimit = createDualRateLimiter({
-  emailMax: env.rateMaxLoginPerHr,
+  emailMax: env.rateMaxLogin,
   emailWindowSec: 3600, // 1 hour
-  ipMax: env.rateMaxLoginPerHr * 5, // Allow more per IP for shared networks
+  ipMax: env.rateMaxLogin * 5, // Allow more per IP for shared networks
   ipWindowSec: 3600, // 1 hour
   keyPrefix: 'login',
   skipSuccessfulRequests: true // Only count failed attempts
@@ -115,27 +115,27 @@ export const dualLoginRateLimit = createDualRateLimiter({
 
 // Enhanced rate limiting for registration (using new hourly config)
 export const dualRegistrationRateLimit = createDualRateLimiter({
-  emailMax: env.rateMaxRegisterPerHr,
+  emailMax: env.rateMaxRegister,
   emailWindowSec: 3600, // 1 hour
-  ipMax: env.rateMaxRegisterPerHr * 3, // Allow more per IP for shared networks
+  ipMax: env.rateMaxRegister * 3, // Allow more per IP for shared networks
   ipWindowSec: 3600, // 1 hour
   keyPrefix: 'register'
 });
 
 // Enhanced rate limiting for password reset (using new hourly config)
 export const dualPasswordResetRateLimit = createDualRateLimiter({
-  emailMax: env.rateMaxResetPerHr,
+  emailMax: env.rateMaxReset,
   emailWindowSec: 3600, // 1 hour
-  ipMax: env.rateMaxResetPerHr * 2, // Slightly more lenient for IP
+  ipMax: env.rateMaxReset * 2, // Slightly more lenient for IP
   ipWindowSec: 3600, // 1 hour
   keyPrefix: 'reset'
 });
 
 // Enhanced rate limiting for verification (using new hourly config)
 export const dualVerificationRateLimit = createDualRateLimiter({
-  emailMax: env.rateMaxVerifyPerHr,
+  emailMax: env.rateMaxReset, // Reuse reset rate limit for verification
   emailWindowSec: 3600, // 1 hour
-  ipMax: env.rateMaxVerifyPerHr * 2,
+  ipMax: env.rateMaxReset * 2,
   ipWindowSec: 3600, // 1 hour
   keyPrefix: 'verify'
 });

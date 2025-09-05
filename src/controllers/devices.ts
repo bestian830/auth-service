@@ -3,24 +3,20 @@ import { Request, Response } from 'express';
 import { deviceService } from '../services/device.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
-import { assertCanAddDevice } from '../middleware/subscription.js';
-import { getEffectivePlanForOrg } from '../services/subscriptionPlan.js';
-import { resolveProductType } from '../config/products.js';
 
 const createDeviceSchema = z.object({
-  orgId: z.string().min(1),
-  locationId: z.string().optional(),
-  type: z.enum(['host', 'kiosk']),
+  organizationId: z.string().min(1),
+  type: z.enum(['HOST', 'KIOSK', 'MOBILE']),
   clientId: z.string().min(1),
   name: z.string().optional(),
   note: z.string().optional(),
 });
 
 const listDevicesSchema = z.object({
-  orgId: z.string().min(1),
+  organizationId: z.string().min(1),
   clientId: z.string().optional(),
-  type: z.enum(['host', 'kiosk']).optional(),
-  status: z.enum(['active', 'revoked']).optional(),
+  type: z.enum(['HOST', 'KIOSK', 'MOBILE']).optional(),
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'REVOKED']).optional(),
 });
 
 const revokeDeviceSchema = z.object({
@@ -34,25 +30,13 @@ export class DevicesController {
    */
   async createDevice(req: Request, res: Response) {
     try {
-      // 双重鉴权验证（防止路由配置错误）
-      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
-
       const body = createDeviceSchema.parse(req.body);
-      
-      // 获取真实的订阅计划
-      const productType = await resolveProductType(body.clientId);
-      const effectivePlan = await getEffectivePlanForOrg(body.orgId, productType, body.locationId);
-      
-      // 配额校验
-      await assertCanAddDevice(body.orgId, effectivePlan);
       
       const result = await deviceService.createDevice(body);
       
       logger.info('Device created via API', {
         deviceId: result.device.id,
-        orgId: body.orgId,
+        organizationId: body.organizationId,
         adminUser: (req as any).claims?.sub,
       });
 
@@ -68,13 +52,6 @@ export class DevicesController {
         return res.status(400).json({ error: 'Invalid request data', details: error.errors });
       }
       
-      if (error.code === 'QUOTA_EXCEEDED') {
-        return res.status(error.status || 422).json({ 
-          error: 'quota_exceeded',
-          message: error.message,
-          type: 'device_quota'
-        });
-      }
       
       res.status(500).json({ error: 'Failed to create device' });
     }
@@ -86,14 +63,9 @@ export class DevicesController {
    */
   async listDevices(req: Request, res: Response) {
     try {
-      // 双重鉴权验证
-      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
-
       const query = listDevicesSchema.parse(req.query);
       
-      const devices = await deviceService.listDevices(query.orgId, {
+      const devices = await deviceService.listDevices(query.organizationId, {
         clientId: query.clientId,
         type: query.type,
         status: query.status,
@@ -117,10 +89,6 @@ export class DevicesController {
    */
   async getDevice(req: Request, res: Response) {
     try {
-      // 双重鉴权验证
-      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
 
       const { deviceId } = req.params;
       
@@ -143,10 +111,6 @@ export class DevicesController {
    */
   async revokeDevice(req: Request, res: Response) {
     try {
-      // 双重鉴权验证
-      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
 
       const { deviceId } = req.params;
       const body = revokeDeviceSchema.parse(req.body);
@@ -177,10 +141,6 @@ export class DevicesController {
    */
   async reactivateDevice(req: Request, res: Response) {
     try {
-      // 双重鉴权验证
-      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
 
       const { deviceId } = req.params;
       
@@ -204,10 +164,6 @@ export class DevicesController {
    */
   async regenerateSecret(req: Request, res: Response) {
     try {
-      // 双重鉴权验证
-      if (!(req as any).user || !(req as any).user.roles?.includes('admin')) {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
 
       const { deviceId } = req.params;
       

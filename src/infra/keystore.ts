@@ -7,7 +7,7 @@ import { seal, open } from './cryptoVault.js';
 import { any } from 'zod';
 
 type DbKey = {
-  kid: string; type: string; status: 'active'|'grace'|'retired';
+  kid: string; type: string; status: 'ACTIVE'|'GRACE'|'RETIRED';
   privatePem: string; publicJwk: any;
   createdAt: Date; activatedAt: Date|null; retiredAt: Date|null;
 };
@@ -19,7 +19,7 @@ function computeJwksEtag(keys: any[]): string {
 }
 
 export async function getActiveKey(): Promise<DbKey|null> {
-  const k = await prisma.key.findFirst({ where: { status: 'active' }});
+  const k = await prisma.key.findFirst({ where: { status: 'ACTIVE' }});
   if (!k) return null;
   
   // Decrypt private key if encrypted
@@ -32,7 +32,7 @@ export async function getActiveKey(): Promise<DbKey|null> {
 }
 
 export async function getGraceKeys(): Promise<DbKey[]> {
-  const ks = await prisma.key.findMany({ where: { status: 'grace' }});
+  const ks = await prisma.key.findMany({ where: { status: 'GRACE' }});
   
   // Decrypt private keys if encrypted
   return ks.map((k: any) => ({
@@ -51,7 +51,7 @@ export async function rotateKey(): Promise<DbKey> {
   // 1) 旧 active → grace
   const old = await getActiveKey();
   if (old) {
-    await prisma.key.update({ where: { kid: old.kid }, data: { status: 'grace', activatedAt: old.activatedAt ?? new Date() }});
+    await prisma.key.update({ where: { kid: old.kid }, data: { status: 'GRACE', activatedAt: old.activatedAt ?? new Date() }});
   }
   // 2) 生成新 RSA（2048）
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -67,7 +67,7 @@ export async function rotateKey(): Promise<DbKey> {
     data: { 
       kid, 
       type: 'RSA', 
-      status: 'active', 
+      status: 'ACTIVE', 
       privatePem: encryptedPrivatePem, 
       publicJwk, 
       createdAt: new Date(), 
@@ -80,7 +80,7 @@ export async function rotateKey(): Promise<DbKey> {
   if (graces.length > 1) {
     const sorted = graces.sort((a,b)=> (a.activatedAt?.getTime()||0)-(b.activatedAt?.getTime()||0));
     for (let i=0;i<sorted.length-1;i++){
-      await prisma.key.update({ where: { kid: sorted[i].kid }, data: { status: 'retired', retiredAt: new Date() }});
+      await prisma.key.update({ where: { kid: sorted[i].kid }, data: { status: 'RETIRED', retiredAt: new Date() }});
     }
   }
   return created as any;

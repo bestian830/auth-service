@@ -29,7 +29,7 @@ export async function requireBearer(req: Request, res: Response, next: NextFunct
       select: { publicJwk: true, status: true }
     });
     
-    if (!keyRecord || keyRecord.status === 'retired') {
+    if (!keyRecord || keyRecord.status === 'RETIRED') {
       return res.status(401).json({ error: 'invalid_token' });
     }
 

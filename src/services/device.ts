@@ -1,17 +1,15 @@
 // src/services/device.ts
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../infra/prisma.js';
 import { nanoid } from 'nanoid';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
-import { logger } from '../utils/logger.js';
-
-const prisma = new PrismaClient();
+import { audit } from '../middleware/audit.js';
+import { DeviceType, DeviceStatus } from '@prisma/client';
 
 export interface DeviceCreateRequest {
-  orgId: string;
-  locationId?: string;
-  type: 'host' | 'kiosk';
+  organizationId: string;
+  type: DeviceType;
   clientId: string;
   name?: string;
   note?: string;
@@ -24,8 +22,8 @@ export interface DeviceProofJWT {
   iat: number;
   exp: number;
   jti: string;
-  device_type: 'host' | 'kiosk';
-  proof_mode: 'device_secret' | 'dpop';
+  device_type: DeviceType;
+  proof_mode: 'device_secret';
 }
 
 export class DeviceService {
@@ -40,19 +38,19 @@ export class DeviceService {
     const device = await prisma.device.create({
       data: {
         id: deviceId,
-        orgId: request.orgId,
-        locationId: request.locationId,
+        organizationId: request.organizationId,
         type: request.type,
         clientId: request.clientId,
         name: request.name,
         secretHash,
         note: request.note,
+        status: DeviceStatus.ACTIVE,
       },
     });
 
-    logger.info('Device created', {
+    audit('device_created', {
       deviceId,
-      orgId: request.orgId,
+      organizationId: request.organizationId,
       type: request.type,
       clientId: request.clientId,
     });
@@ -71,7 +69,7 @@ export class DeviceService {
       where: { id: deviceId },
       select: {
         id: true,
-        orgId: true,
+        organizationId: true,
         type: true,
         status: true,
         secretHash: true,
@@ -84,7 +82,7 @@ export class DeviceService {
       throw new Error('Device not found');
     }
 
-    if (device.status !== 'active') {
+    if (device.status !== DeviceStatus.ACTIVE) {
       throw new Error('Device is not active');
     }
 
@@ -124,28 +122,27 @@ export class DeviceService {
   async getDevice(deviceId: string) {
     return await prisma.device.findUnique({
       where: { id: deviceId },
-      select: {
-        id: true,
-        orgId: true,
-        locationId: true,
-        type: true,
-        clientId: true,
-        name: true,
-        status: true,
-        secretHash: true,
-        lastSeenAt: true,
-        createdAt: true,
-        revokedAt: true,
-        note: true,
-      },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+          }
+        }
+      }
     });
   }
 
   /**
    * 列出组织的设备
    */
-  async listDevices(orgId: string, options?: { clientId?: string; type?: string; status?: string }) {
-    const where: any = { orgId };
+  async listDevices(organizationId: string, options?: { 
+    clientId?: string; 
+    type?: DeviceType; 
+    status?: DeviceStatus 
+  }) {
+    const where: any = { organizationId };
     
     if (options?.clientId) where.clientId = options.clientId;
     if (options?.type) where.type = options.type;
@@ -155,8 +152,7 @@ export class DeviceService {
       where,
       select: {
         id: true,
-        orgId: true,
-        locationId: true,
+        organizationId: true,
         type: true,
         clientId: true,
         name: true,
@@ -177,16 +173,16 @@ export class DeviceService {
     const device = await prisma.device.update({
       where: { id: deviceId },
       data: {
-        status: 'revoked',
+        status: DeviceStatus.REVOKED,
         revokedAt: new Date(),
         note: reason ? `${reason} (revoked)` : undefined,
       },
     });
 
-    logger.info('Device revoked', {
+    audit('device_revoked', {
       deviceId,
       reason,
-      orgId: device.orgId,
+      organizationId: device.organizationId,
     });
 
     return device;
@@ -199,14 +195,14 @@ export class DeviceService {
     const device = await prisma.device.update({
       where: { id: deviceId },
       data: {
-        status: 'active',
+        status: DeviceStatus.ACTIVE,
         revokedAt: null,
       },
     });
 
-    logger.info('Device reactivated', {
+    audit('device_reactivated', {
       deviceId,
-      orgId: device.orgId,
+      organizationId: device.organizationId,
     });
 
     return device;
@@ -224,38 +220,15 @@ export class DeviceService {
       data: { secretHash },
     });
 
-    logger.info('Device secret regenerated', {
+    audit('device_secret_regenerated', {
       deviceId,
-      orgId: device.orgId,
+      organizationId: device.organizationId,
     });
 
     return {
       device,
       deviceSecret, // 仅重新生成时返回
     };
-  }
-
-  /**
-   * 检查是否需要设备证明
-   */
-  isDeviceProofRequired(clientId: string): boolean {
-    const requiredProducts = env.requireDeviceProofFor.split(',').map(p => p.trim());
-    
-    // 检查 clientId 是否匹配需要设备证明的产品
-    for (const product of requiredProducts) {
-      if (clientId.includes(product)) {
-        return true;
-      }
-    }
-    
-    return false;
-  }
-
-  /**
-   * 获取设备证明模式
-   */
-  getProofMode(deviceType: 'host' | 'kiosk'): 'device_secret' | 'dpop' {
-    return deviceType === 'host' ? env.proofModeHost as any : env.proofModeKiosk as any;
   }
 
   /**
@@ -275,6 +248,41 @@ export class DeviceService {
     
     return storedBuffer.length === providedBuffer.length &&
            timingSafeEqual(storedBuffer, providedBuffer);
+  }
+
+  /**
+   * 检查设备是否属于指定组织
+   */
+  async checkDeviceOrganization(deviceId: string, organizationId: string): Promise<boolean> {
+    const device = await prisma.device.findUnique({
+      where: { id: deviceId },
+      select: { organizationId: true, status: true }
+    });
+
+    return !!(device && 
+             device.organizationId === organizationId && 
+             device.status === DeviceStatus.ACTIVE);
+  }
+
+  /**
+   * 获取设备的组织信息
+   */
+  async getDeviceOrganization(deviceId: string) {
+    const device = await prisma.device.findUnique({
+      where: { id: deviceId },
+      select: {
+        organizationId: true,
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+          }
+        }
+      }
+    });
+
+    return device?.organization || null;
   }
 }
 

@@ -4,15 +4,12 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { deviceService } from '../services/device.js';
 import { jtiCache } from '../infra/redis.js';
 import { audit } from './audit.js';
-import { type ProductType } from '../config/products.js';
-
 declare module 'express' {
   interface Request {
     device?: {
       id: string;
-      type: 'host' | 'kiosk';
+      type: 'HOST' | 'KIOSK' | 'MOBILE';
     };
-    product?: ProductType;
   }
 }
 
@@ -41,7 +38,6 @@ export function deviceProof(required: boolean = true) {
       present: !!hasHeaders,
       deviceId,
       required,
-      product: req.product,
       ip: req.ip,
       userAgent: req.get('user-agent')
     });
@@ -51,7 +47,6 @@ export function deviceProof(required: boolean = true) {
         audit('device_proof_fail', {
           reason: 'missing_headers',
           deviceId,
-          product: req.product,
           ip: req.ip
         });
         return res.status(401).json({ 
@@ -82,7 +77,7 @@ export function deviceProof(required: boolean = true) {
 
       // 获取设备信息和密钥
       const device = await deviceService.getDevice(deviceId!);
-      if (!device || device.status !== 'active') {
+      if (!device || device.status !== 'ACTIVE') {
         throw new Error('Device not found or inactive');
       }
 
@@ -103,14 +98,13 @@ export function deviceProof(required: boolean = true) {
       // 设置设备信息到请求上下文
       req.device = {
         id: deviceId!,
-        type: device.type as 'host' | 'kiosk'
+        type: device.type
       };
 
       audit('device_proof_ok', {
         deviceId,
         deviceType: device.type,
         jti,
-        product: req.product,
         method,
         path
       });
@@ -121,7 +115,6 @@ export function deviceProof(required: boolean = true) {
         reason: error.message,
         deviceId,
         jti,
-        product: req.product,
         ip: req.ip,
         method: req.method,
         path: req.path
@@ -173,12 +166,3 @@ async function verifyDeviceHmac(
   }
 }
 
-/**
- * 根据产品线确定设备证明要求
- */
-export function requireDeviceProofForProduct() {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const required = req.product === 'mopai';
-    return deviceProof(required)(req, res, next);
-  };
-}

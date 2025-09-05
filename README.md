@@ -1,566 +1,1443 @@
-# auth-service v0.2.8-p2
+# Tymoe Auth Service
 
-企业级 OAuth2/OpenID Connect 认证服务，支持多租户、设备证明和加密验证码复用。
+> **身份认证与授权中心** - 基于OAuth2/OpenID Connect的企业级身份管理服务
 
-## ✨ v0.2.8-p2 抛光版新特性
+## 📖 目录
 
-### 🎯 产品线判定中间件
-- **统一产品解析**: 支持 header、query、client_map 等多种方式
-- **优雅降级策略**: unknown 产品支持 reject/fallback 策略
-- **运行时重载**: 管理员可热重载产品客户端映射
+- [系统概述](#系统概述)
+- [在Tymoe生态中的位置](#在tymoe生态中的位置)
+- [核心功能](#核心功能)
+- [架构设计](#架构设计)
+- [Token管理](#token管理)
+- [环境配置](#环境配置)
+- [快速开始](#快速开始)
+- [API接口](#api接口)
+- [前后端协作](#前后端协作)
+- [开发指南](#开发指南)
+- [部署运维](#部署运维)
 
-### 🔧 环境配置验证
-- **Zod 模式验证**: 启动时验证所有环境变量格式
-- **类型安全**: 提供完整的 TypeScript 类型支持
-- **开发友好**: 开发环境容错，生产环境严格校验
+## 系统概述
 
-### 🔐 设备证明增强
-- **HMAC-SHA256 验证**: 基于 baseString 的设备身份验证
-- **JTI 重放保护**: 防止设备证明重复使用
-- **产品特定策略**: mopai 强制，ploml 可选
+Auth Service是Tymoe微服务生态系统的**身份认证中心**，专注于提供安全、可靠的用户身份管理和访问控制服务。本服务基于OAuth2/OpenID Connect标准协议，为整个Tymoe产品矩阵提供统一的身份验证解决方案。
 
-### 📊 订阅可观测性
-- **配额检查服务**: 实时查询组织配额使用情况
-- **审计事件标准化**: 统一审计事件命名规范
-- **管理接口增强**: 新增配额查询和系统健康检查
+### 设计理念
 
-### ⚙️ 管理运维接口
-- **配置热重载**: `POST /admin/config/reload-product-map`
-- **配额查询**: `GET /admin/orgs/:orgId/quota`
-- **系统健康检查**: `GET /admin/health`
+- **简化架构**：专注身份认证，不处理业务逻辑
+- **标准合规**：完全符合OAuth2/OIDC规范
+- **安全至上**：多层安全防护，支持CAPTCHA、速率限制、账户锁定
+- **组织导向**：基于组织的权限管理模型
+- **可扩展性**：支持设备认证、多租户隔离
 
-## ✨ v0.2.8 核心特性
+## 在Tymoe生态中的位置
 
-### 🔐 设备证明 (Device Proof)
-- **设备注册与管理**: 支持 host 和 kiosk 设备类型
-- **HS256 设备证明**: 基于共享密钥的设备身份验证
-- **JTI 缓存**: 防止设备证明重放攻击
-- **产品特定策略**: mopai 和 ploml 产品的独立配置
+### 🏗️ 服务架构图
 
-### 🔄 刷新令牌策略
-- **滑动续期**: mopai 产品默认使用，减少用户登录中断
-- **轮转阈值**: ploml 产品使用，平衡安全性与可用性
-- **生命周期管理**: 支持最大生命周期限制
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   ploml     │    │   mopai     │    │  其他服务   │
+│  (美业SaaS)  │    │  (餐饮SaaS)  │    │            │
+└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+       │                  │                  │
+       │                  │                  │
+       └─────────┬────────┴──────────────────┘
+                 │
+    ┌────────────▼────────────┐
+    │                         │
+    │    Auth Service         │
+    │   (身份认证中心)          │
+    │                         │
+    └─────────────────────────┘
+                 │
+    ┌────────────▼────────────┐
+    │                         │
+    │     PostgreSQL          │
+    │    (用户数据存储)         │
+    │                         │
+    └─────────────────────────┘
+```
 
-### 🛡️ 安全增强
-- **设备绑定**: 刷新令牌与设备关联
-- **重放保护**: JTI 缓存防止证明重复使用
-- **限流控制**: 设备证明请求限流保护
+### 🔗 服务间通信
 
-## 📋 功能特性
+#### 1. **与业务服务的通信协议**
 
-- ✅ OAuth2 授权码流程 (PKCE)
-- ✅ OpenID Connect ID Token
-- ✅ 刷新令牌家族管理
-- ✅ 多租户架构
-- ✅ 设备证明与管理
-- ✅ 加密验证码复用 (AES-256-GCM)
-- ✅ Redis 缓存与限流
-- ✅ 审计日志
-- ✅ reCAPTCHA 集成
-- ✅ 邮件验证
+**标准Bearer Token认证：**
+```http
+Authorization: Bearer <access_token>
+```
 
-## 🚀 快速开始
+**Token验证端点：**
+```http
+POST /oauth2/introspect
+Content-Type: application/x-www-form-urlencoded
 
-### 环境要求
+token=<access_token>&
+client_id=<service_client_id>&
+client_secret=<service_secret>
+```
 
-- Node.js 18+
-- PostgreSQL 13+
-- Redis 6+
+**响应格式：**
+```json
+{
+  "active": true,
+  "sub": "user-uuid",
+  "aud": ["tymoe-service:org-id"],
+  "roles": ["MANAGER"],
+  "organizationId": "org-uuid",
+  "exp": 1640995200
+}
+```
 
-### 安装配置
+#### 2. **微服务注册规范**
 
-1. **克隆并安装依赖**
+每个业务服务需要在Auth Service中注册为OAuth2客户端：
+
+```sql
+INSERT INTO "Client" (
+  "clientId", "name", "type", "secretHash", 
+  "authMethod", "redirectUris"
+) VALUES (
+  'ploml-api', 'Ploml Business API', 'CONFIDENTIAL', 
+  '<bcrypt_hash>', 'client_secret_post', 
+  '[]'::jsonb
+);
+```
+
+### 🎯 接口规则与约定
+
+#### HTTP状态码规范
+- `200` - 成功
+- `400` - 请求参数错误
+- `401` - 未认证或Token无效
+- `403` - 已认证但权限不足
+- `423` - 账户被锁定
+- `429` - 请求频率过高
+- `500` - 服务器内部错误
+
+#### 错误响应格式
+```json
+{
+  "error": "invalid_credentials",
+  "detail": "Email or password is incorrect"
+}
+```
+
+## 核心功能
+
+### 👤 用户管理
+- **用户注册**：邮箱验证、密码策略、防重复注册
+- **用户登录**：多因素认证、CAPTCHA防护、失败锁定
+- **密码管理**：重置密码、修改密码、强度验证
+- **个人资料**：基本信息维护、邮箱变更验证
+
+### 🏢 组织管理
+- **组织架构**：创建组织、层级管理、状态控制
+- **成员管理**：邀请用户、角色分配、权限控制
+- **角色系统**：三级权限（OWNER/MANAGER/EMPLOYEE）
+
+### 🔐 OAuth2/OIDC认证
+- **授权码流程**：标准OAuth2授权码模式
+- **Token管理**：Access Token + Refresh Token
+- **ID Token**：OpenID Connect身份令牌
+- **客户端认证**：支持多种客户端认证方式
+
+### 📱 设备管理
+- **设备注册**：生成设备密钥、OAuth2客户端配置
+- **设备认证**：基于JWT的设备证明机制
+- **生命周期管理**：激活、吊销、密钥轮换
+
+### 🛡️ 安全防护
+- **速率限制**：基于邮箱+IP的双重限制
+- **CAPTCHA集成**：Google reCAPTCHA v2支持
+- **账户锁定**：基于失败次数的自动锁定
+- **会话管理**：安全的会话存储和清理
+
+## 架构设计
+
+### 📁 项目结构
+
+```
+src/
+├── controllers/          # 控制器层
+│   ├── identity.ts       # 用户认证相关
+│   ├── oidc.ts          # OAuth2/OIDC流程
+│   ├── admin.ts         # 管理员功能
+│   └── organization.ts   # 组织管理
+├── services/            # 业务逻辑层
+│   ├── identity.ts      # 身份管理服务
+│   ├── organization.ts  # 组织管理服务
+│   ├── token.ts        # Token管理服务
+│   ├── device.ts       # 设备管理服务
+│   ├── mailer.ts       # 邮件发送服务
+│   └── templates.ts    # 邮件模板
+├── middleware/          # 中间件层
+│   ├── bearer.ts       # Bearer Token验证
+│   ├── redisRate.ts    # Redis速率限制
+│   ├── captcha.ts      # CAPTCHA验证
+│   └── audit.ts        # 审计日志
+├── infra/              # 基础设施层
+│   ├── prisma.ts       # 数据库连接
+│   ├── redis.ts        # Redis连接和速率限制
+│   └── cryptoVault.ts  # 加密密钥管理
+├── routes/             # 路由定义
+├── views/              # HTML模板
+├── scripts/            # 运维脚本
+└── config/             # 配置管理
+```
+
+### 🏗️ 分层架构
+
+#### 1. **表示层 (Presentation Layer)**
+- **HTTP路由**：Express.js路由配置
+- **中间件**：认证、授权、速率限制、CORS
+- **视图模板**：登录页面、错误页面
+
+#### 2. **业务逻辑层 (Business Logic Layer)**
+- **Service类**：封装核心业务逻辑
+- **领域模型**：用户、组织、设备、Token等
+- **业务规则**：密码策略、权限验证、组织管理
+
+#### 3. **数据访问层 (Data Access Layer)**
+- **Prisma ORM**：类型安全的数据库访问
+- **数据模型**：完整的数据库schema定义
+- **查询优化**：索引设计、查询性能优化
+
+#### 4. **基础设施层 (Infrastructure Layer)**
+- **数据库**：PostgreSQL主存储
+- **缓存**：Redis缓存和速率限制
+- **消息队列**：邮件发送队列（可选）
+- **密钥管理**：JWT签名密钥的安全管理
+
+### 🔄 数据流程
+
+```mermaid
+graph TB
+    A[客户端请求] --> B[路由层]
+    B --> C[中间件验证]
+    C --> D[控制器]
+    D --> E[服务层]
+    E --> F[数据层]
+    F --> G[数据库/Redis]
+    G --> F
+    F --> E
+    E --> H[响应生成]
+    H --> I[客户端响应]
+```
+
+## Token管理
+
+### 🎫 Token类型与作用
+
+#### 1. **Access Token**
+- **用途**：API访问授权
+- **有效期**：30分钟（可配置）
+- **格式**：JWT (RS256签名)
+- **包含信息**：
+  ```json
+  {
+    "sub": "user-uuid",
+    "aud": "tymoe-service:org-id",
+    "roles": ["MANAGER"],
+    "scopes": ["read", "write"],
+    "organizationId": "org-uuid",
+    "deviceId": "device-uuid",
+    "exp": 1640995200,
+    "iat": 1640991600,
+    "jti": "token-unique-id"
+  }
+  ```
+
+#### 2. **Refresh Token**
+- **用途**：刷新Access Token
+- **有效期**：30天（可配置）
+- **格式**：不透明字符串（数据库存储）
+- **安全特性**：
+  - 家族化管理（Family-based）
+  - 自动轮换（Rotation）
+  - 泄露检测（Automatic revocation）
+
+#### 3. **ID Token** (OpenID Connect)
+- **用途**：身份信息传递
+- **有效期**：5分钟（短期）
+- **格式**：JWT (RS256签名)
+- **包含信息**：
+  ```json
+  {
+    "sub": "user-uuid",
+    "aud": "client-id",
+    "email": "user@example.com",
+    "organizationId": "org-uuid",
+    "exp": 1640991900,
+    "iat": 1640991600
+  }
+  ```
+
+### 🔄 Token轮换机制
+
+#### Refresh Token家族管理
+1. **初始发放**：创建新的Token Family
+2. **使用刷新**：生成新的RT，旧RT标记为已轮换
+3. **泄露检测**：使用已轮换的RT时，整个家族被吊销
+4. **自动清理**：定期清理过期的Token记录
+
+```typescript
+// Token刷新流程示例
+const rotated = await rotateRefreshToken(oldRefreshToken);
+// 返回: { accessToken, refreshToken, expiresIn }
+```
+
+### ⏰ 长期在线策略
+
+#### 1. **客户端实现**
+```javascript
+// 自动Token刷新
+setInterval(async () => {
+  if (shouldRefreshToken()) {
+    await refreshAccessToken();
+  }
+}, 5 * 60 * 1000); // 每5分钟检查一次
+
+// Token过期自动处理
+axios.interceptors.response.use(
+  response => response,
+  async error => {
+    if (error.response?.status === 401) {
+      await refreshAccessToken();
+      return axios.request(error.config);
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+#### 2. **服务端支持**
+- **Token续期**：在Token过期前自动刷新
+- **会话保持**：Redis存储用户会话状态
+- **优雅降级**：Token失效时的友好处理
+
+## 环境配置
+
+### 🔧 .env配置文件
+
+#### 开发环境 (.env.development)
 ```bash
-git clone <repository>
+# ==================== 基础配置 ====================
+NODE_ENV=development
+PORT=8080
+
+# ==================== 数据库配置 ====================
+DATABASE_URL=postgresql://username:password@localhost:5432/tymoe_auth_dev
+
+# ==================== Redis配置 ====================
+REDIS_URL=redis://localhost:6379
+REDIS_PASSWORD=
+REDIS_DB=0
+REDIS_NAMESPACE=authsvc_dev
+
+# ==================== OAuth2/OIDC配置 ====================
+ISSUER_URL=http://localhost:8080
+ACCESS_TOKEN_TTL_SECONDS=1800
+REFRESH_TOKEN_TTL_SECONDS=2592000
+
+# ==================== 安全配置 ====================
+SESSION_SECRET=your-super-secret-session-key-development-only
+KEYSTORE_ENC_KEY=your-32-byte-aes-key-for-development
+
+# ==================== CORS配置 ====================
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
+COOKIE_SAMESITE=lax
+
+# ==================== 速率限制配置 ====================
+RATE_LOGIN_PER_MIN=10
+RATE_TOKEN_PER_MIN=50
+RATE_MAX_LOGIN_PER_HR=20
+RATE_MAX_REGISTER_PER_HR=10
+RATE_MAX_RESET_PER_HR=5
+
+# ==================== 邮件配置 ====================
+MAIL_TRANSPORT=CONSOLE
+SMTP_HOST=smtp.mailtrap.io
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your_mailtrap_user
+SMTP_PASS=your_mailtrap_pass
+MAIL_FROM=Tymoe Auth <no-reply@dev.tymoe.com>
+
+# ==================== 验证码配置 ====================
+SIGNUP_CODE_TTL_SEC=900
+RESET_CODE_TTL_SEC=900
+CODE_ATTEMPT_MAX=5
+VERIFICATION_CODE_REUSE_WINDOW_SEC=600
+
+# ==================== 登录安全配置 ====================
+LOGIN_CAPTCHA_THRESHOLD=3
+LOGIN_LOCK_THRESHOLD=10
+LOGIN_LOCK_MINUTES=30
+
+# ==================== CAPTCHA配置 ====================
+CAPTCHA_ENABLED=true
+CAPTCHA_SITE_KEY=your_recaptcha_site_key_v2
+CAPTCHA_SECRET_KEY=your_recaptcha_secret_key_v2
+
+# ==================== 监控配置 ====================
+METRICS_TOKEN=dev-metrics-token-please-change
+
+# ==================== 审计配置 ====================
+AUDIT_TO_FILE=true
+AUDIT_FILE_PATH=./logs/audit.log
+
+# ==================== 设备认证配置 ====================
+DEVICE_SECRET_LENGTH=32
+
+# ==================== 内部服务配置 ====================
+INTROSPECT_CLIENT_ID=internal-gateway
+INTROSPECT_CLIENT_SECRET=super-secret-gateway-key
+```
+
+#### 生产环境 (.env.production)
+```bash
+# ==================== 基础配置 ====================
+NODE_ENV=production
+PORT=8080
+
+# ==================== 数据库配置 ====================
+DATABASE_URL=postgresql://auth_user:SUPER_SECURE_PASSWORD@db-server:5432/tymoe_auth_prod
+
+# ==================== Redis配置 ====================
+REDIS_URL=redis://redis-server:6379
+REDIS_PASSWORD=REDIS_SUPER_SECURE_PASSWORD
+REDIS_DB=0
+REDIS_NAMESPACE=authsvc
+REDIS_CONNECT_TIMEOUT=5000
+REDIS_COMMAND_TIMEOUT=3000
+REDIS_MAX_RETRIES=3
+
+# ==================== OAuth2/OIDC配置 ====================
+ISSUER_URL=https://auth.tymoe.com
+ACCESS_TOKEN_TTL_SECONDS=1800
+REFRESH_TOKEN_TTL_SECONDS=2592000
+
+# ==================== 安全配置 ====================
+SESSION_SECRET=EXTREMELY_LONG_AND_RANDOM_SESSION_SECRET_KEY_256_BITS
+KEYSTORE_ENC_KEY=EXACTLY_32_BYTES_AES_256_KEY_HERE
+
+# ==================== CORS配置 ====================
+ALLOWED_ORIGINS=https://app.tymoe.com,https://ploml.tymoe.com,https://mopai.tymoe.com
+COOKIE_SAMESITE=strict
+
+# ==================== 速率限制配置 (生产环境更严格) ====================
+RATE_LOGIN_PER_MIN=5
+RATE_TOKEN_PER_MIN=25
+RATE_MAX_LOGIN_PER_HR=10
+RATE_MAX_REGISTER_PER_HR=5
+RATE_MAX_RESET_PER_HR=3
+
+# ==================== 邮件配置 ====================
+MAIL_TRANSPORT=SMTP
+SMTP_HOST=smtp.mailgun.org
+SMTP_PORT=587
+SMTP_SECURE=true
+SMTP_USER=postmaster@mg.tymoe.com
+SMTP_PASS=MAILGUN_API_KEY
+MAIL_FROM=Tymoe <no-reply@tymoe.com>
+
+# ==================== 验证码配置 ====================
+SIGNUP_CODE_TTL_SEC=600
+RESET_CODE_TTL_SEC=600
+CODE_ATTEMPT_MAX=3
+VERIFICATION_CODE_REUSE_WINDOW_SEC=300
+
+# ==================== 登录安全配置 (生产环境更严格) ====================
+LOGIN_CAPTCHA_THRESHOLD=2
+LOGIN_LOCK_THRESHOLD=5
+LOGIN_LOCK_MINUTES=60
+
+# ==================== CAPTCHA配置 ====================
+CAPTCHA_ENABLED=true
+CAPTCHA_SITE_KEY=PRODUCTION_RECAPTCHA_SITE_KEY_V2
+CAPTCHA_SECRET_KEY=PRODUCTION_RECAPTCHA_SECRET_KEY_V2
+
+# ==================== 监控配置 ====================
+METRICS_TOKEN=PRODUCTION_METRICS_TOKEN_SUPER_SECURE
+
+# ==================== 审计配置 ====================
+AUDIT_TO_FILE=false
+AUDIT_FILE_PATH=/var/log/tymoe/auth-audit.log
+
+# ==================== 设备认证配置 ====================
+DEVICE_SECRET_LENGTH=32
+
+# ==================== 内部服务配置 ====================
+INTROSPECT_CLIENT_ID=production-gateway
+INTROSPECT_CLIENT_SECRET=PRODUCTION_GATEWAY_SUPER_SECRET_KEY
+```
+
+### ⚙️ 关键配置说明
+
+#### 1. **安全配置**
+- `SESSION_SECRET`: 至少256位的随机字符串
+- `KEYSTORE_ENC_KEY`: 严格32字节的AES-256密钥
+- `CAPTCHA_*`: Google reCAPTCHA v2配置
+
+#### 2. **数据库配置**
+- 生产环境建议使用连接池
+- 设置合适的超时和重试参数
+- 启用SSL连接
+
+#### 3. **Redis配置**
+- 生产环境必须设置密码
+- 使用专用命名空间避免冲突
+- 配置适当的超时参数
+
+#### 4. **邮件配置**
+- 开发环境可使用CONSOLE输出
+- 生产环境建议使用专业邮件服务（如Mailgun、SendGrid）
+
+## 快速开始
+
+### 📦 初始化步骤
+
+#### 1. **环境准备**
+```bash
+# 克隆项目
+git clone <repository-url>
 cd auth-service
+
+# 安装依赖
 npm install
-```
 
-2. **配置环境变量**
-```bash
+# 复制环境配置
 cp .env.example .env
-# 编辑 .env 文件配置数据库、Redis 等信息
+# 编辑 .env 文件，填入正确的配置信息
 ```
 
-3. **数据库迁移**
+#### 2. **数据库初始化**
 ```bash
-npx prisma migrate dev
+# 生成Prisma客户端
 npx prisma generate
+
+# 运行数据库迁移
+npx prisma migrate dev --name init
+
+# (可选) 生成测试数据
+npx prisma db seed
 ```
 
-4. **启动服务**
+#### 3. **密钥管理**
 ```bash
+# 生成第一个JWT签名密钥
+npm run rotate:key
+
+# 查看生成的密钥
+npx prisma studio
+# 导航到 Key 表查看生成的密钥
+```
+
+#### 4. **启动服务**
+```bash
+# 开发模式启动
 npm run dev
+
+# 生产模式启动
+npm run build
+npm start
 ```
 
-服务将在 http://localhost:8080 启动。
+### 🔧 必需的手动配置
 
-## 📱 设备管理
+#### 1. **OAuth2客户端注册**
 
-### 创建设备
-```bash
-POST /admin/devices
+为每个业务服务注册OAuth2客户端：
+
+```sql
+-- 注册ploml服务
+INSERT INTO "Client" (
+    "id", "clientId", "name", "type", 
+    "secretHash", "authMethod", "redirectUris"
+) VALUES (
+    gen_random_uuid()::text,
+    'ploml-web',
+    'Ploml Web Application',
+    'PUBLIC',
+    NULL,
+    'none',
+    '["http://localhost:3000/auth/callback"]'::jsonb
+);
+
+-- 注册内部API网关
+INSERT INTO "Client" (
+    "id", "clientId", "name", "type", 
+    "secretHash", "authMethod", "redirectUris"
+) VALUES (
+    gen_random_uuid()::text,
+    'internal-gateway',
+    'Internal API Gateway',
+    'CONFIDENTIAL',
+    '$2b$10$...',  -- 使用bcrypt加密的secret
+    'client_secret_post',
+    '[]'::jsonb
+);
+```
+
+#### 2. **管理员用户创建**
+
+```sql
+-- 创建初始管理员用户
+INSERT INTO "User" (
+    "id", "email", "passwordHash", "name", 
+    "emailVerifiedAt", "createdAt", "updatedAt"
+) VALUES (
+    gen_random_uuid()::text,
+    'admin@tymoe.com',
+    '$2b$10$...',  -- 使用bcrypt加密的密码
+    'System Administrator',
+    NOW(),
+    NOW(),
+    NOW()
+);
+```
+
+#### 3. **Redis数据结构**
+
+服务会自动创建以下Redis键结构：
+- `authsvc:rl:login:email:<hash>` - 邮箱登录限制
+- `authsvc:rl:login:ip:<ip>` - IP登录限制
+- `authsvc:user_lock:<userId>` - 用户锁定状态
+- `authsvc:login_failures:<userId>` - 登录失败计数
+
+## API接口
+
+### 🔐 认证相关
+
+#### 用户注册
+```http
+POST /identity/register
+Content-Type: application/json
+
 {
-  "orgId": "org-123",
-  "type": "host",
-  "clientId": "web-mopai",
-  "name": "Store Terminal 1",
-  "locationId": "store-001"
+  "email": "user@example.com",
+  "password": "SecurePassword123!",
+  "name": "用户姓名",
+  "phone": "+86 138 0013 8000"
 }
 ```
 
-### 设备证明格式
+#### 邮箱验证
+```http
+POST /identity/verify
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "code": "selector.token"
+}
+```
+
+#### 用户登录
+```http
+POST /identity/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123!",
+  "captcha": "captcha_response_token"
+}
+```
+
+### 🎫 OAuth2流程
+
+#### 授权请求
+```http
+GET /oauth2/authorize?response_type=code&client_id=ploml-web&redirect_uri=http://localhost:3000/callback&scope=openid profile&state=random_state
+```
+
+#### Token交换
+```http
+POST /oauth2/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&
+code=AUTH_CODE&
+client_id=ploml-web&
+redirect_uri=http://localhost:3000/callback
+```
+
+#### Token刷新
+```http
+POST /oauth2/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&
+refresh_token=REFRESH_TOKEN&
+client_id=ploml-web
+```
+
+#### Token验证（内部服务使用）
+```http
+POST /oauth2/introspect
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic <base64(client_id:client_secret)>
+
+token=ACCESS_TOKEN
+```
+
+### 🏢 组织管理
+
+#### 创建组织
+```http
+POST /organizations
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "name": "我的美容院",
+  "description": "专业美容服务"
+}
+```
+
+#### 添加成员
+```http
+POST /organizations/:orgId/members
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "email": "employee@example.com",
+  "role": "EMPLOYEE"
+}
+```
+
+### 📱 设备管理
+
+#### 注册设备
+```http
+POST /devices
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "name": "POS机-001",
+  "type": "HOST",
+  "organizationId": "org-uuid"
+}
+```
+
+## 前后端协作
+
+### 🌐 前端集成指南
+
+#### 1. **OAuth2流程实现**
+
 ```javascript
-// 设备生成 JWT 证明
-const deviceProof = jwt.sign({
-  iss: deviceId,
-  aud: 'http://localhost:8080',
-  sub: deviceId,
-  iat: Math.floor(Date.now() / 1000),
-  exp: Math.floor(Date.now() / 1000) + 300,
-  jti: crypto.randomUUID(),
-  device_type: 'host',
-  proof_mode: 'device_secret'
-}, deviceSecret, { algorithm: 'HS256' });
-```
-
-### 带设备证明的刷新请求
-```bash
-POST /oauth/token
-{
-  "grant_type": "refresh_token",
-  "refresh_token": "rt_xxx",
-  "device_proof": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
-}
-```
-
-## 🔧 配置说明
-
-### v0.2.8-p2 新增配置
-
-#### 产品线映射配置
-```env
-# 产品客户端映射 (格式: clientId:product,...)
-PRODUCT_CLIENT_MAP=web-ploml:ploml,web-mopai:mopai,kiosk-mopai:mopai
-
-# 未知产品策略: ploml | mopai | reject
-UNKNOWN_PRODUCT_STRATEGY=ploml
-
-# 产品默认计划
-DEFAULT_PLAN_MOPAI=standard
-DEFAULT_PLAN_PLOML=basic
-```
-
-#### 刷新策略配置（天/小时单位）
-```env
-# MOPAI 产品配置（设备友好）
-MOPAI_REFRESH_SLIDING_DAYS=30        # 30天滑动续期
-MOPAI_ROTATE_THRESHOLD_HOURS=360     # 360小时轮转阈值  
-MOPAI_INACTIVITY_LOGOUT_DAYS=30      # 30天不活跃超时
-
-# PLOML 产品配置（用户友好）
-PLOML_REFRESH_SLIDING_DAYS=15        # 15天滑动续期
-PLOML_ROTATE_THRESHOLD_HOURS=180     # 180小时轮转阈值
-PLOML_REFRESH_HARD_LIMIT_DAYS=365    # 365天硬限制
-```
-
-#### 设备证明配置（增强）
-```env
-# 设备证明头部格式: X-Device-Id, X-JTI, X-TS, X-Device-Proof
-REQUIRE_DEVICE_PROOF_FOR=mopai       # 仅 mopai 强制
-
-# HMAC 设备证明配置
-DEVICE_SECRET_LENGTH=32
-DEVICE_JWT_TTL_SEC=300
-JTI_CACHE_TTL_SEC=300
-```
-
-### 传统配置
-
-#### 设备证明配置
-```env
-# 需要设备证明的产品
-REQUIRE_DEVICE_PROOF_FOR=mopai,ploml
-
-# 证明模式配置
-PROOF_MODE_HOST=device_secret
-PROOF_MODE_KIOSK=device_secret
-
-# 设备密钥配置
-DEVICE_SECRET_LENGTH=32
-DEVICE_JWT_TTL_SEC=300
-```
-
-### 刷新策略配置
-```env
-# 产品特定策略
-REFRESH_STRATEGY_MOPAI=sliding_renewal
-REFRESH_STRATEGY_PLOML=rotation_threshold
-
-# 策略参数
-REFRESH_SLIDING_EXTEND_SEC=604800    # 7天
-REFRESH_ROTATION_THRESHOLD_SEC=86400 # 1天
-REFRESH_MAX_LIFETIME_SEC=7776000     # 90天
-```
-
-### JTI 缓存配置
-```env
-# 启用产品
-JTI_CACHE_ENABLED_PRODUCTS=mopai,ploml
-
-# 缓存参数
-JTI_CACHE_TTL_SEC=3600
-DEVICE_PROOF_RATE_LIMIT=100
-DEVICE_PROOF_RATE_WINDOW_SEC=3600
-```
-
-## 🔐 安全特性
-
-### 1. 设备证明验证
-- 使用 HS256 算法验证设备密钥
-- 检查 JWT 载荷的 iss、sub、aud 字段
-- 验证时间戳和过期时间
-
-### 2. 重放攻击防护
-- JTI 缓存防止证明重复使用
-- 可配置的缓存有效期
-- 产品级别的缓存控制
-
-### 3. 刷新策略安全
-- 滑动续期有最大生命周期限制
-- 轮转阈值避免频繁轮转
-- 设备绑定增强安全性
-
-### 4. 限流保护
-- 设备证明请求限流
-- 基于 Redis 的分布式限流
-- 可配置的限流阈值
-
-## 📊 监控与日志
-
-### 审计事件
-```javascript
-// 设备证明相关事件
-'device_proof_verified'    // 设备证明验证成功
-'device_proof_failed'      // 设备证明验证失败
-'device_proof_replay'      // 检测到重放攻击
-'token_refresh_with_device' // 带设备证明的令牌刷新
-
-// 设备管理事件
-'device_created'           // 设备创建
-'device_revoked'           // 设备撤销
-'device_secret_regenerated' // 密钥重新生成
-```
-
-### Redis 缓存监控
-```bash
-# 查看 JTI 缓存
-redis-cli keys "authsvc:jti:*"
-
-# 查看限流状态
-redis-cli keys "authsvc:rate:*"
-```
-
-## 🧪 测试
-
-```bash
-# 运行所有测试
-npm test
-
-# 运行设备相关测试
-npm test -- --grep "device"
-
-# 运行刷新策略测试
-npm test -- --grep "refresh"
-```
-
-## 🚀 部署
-
-### Docker 部署
-```bash
-docker build -t auth-service:v0.2.8 .
-docker run -d \
-  --name auth-service \
-  -p 8080:8080 \
-  --env-file .env.production \
-  auth-service:v0.2.8
-```
-
-### 生产环境检查清单
-- [ ] 配置强随机 SESSION_SECRET
-- [ ] 设置生产数据库连接
-- [ ] 配置 Redis 集群
-- [ ] 启用 HTTPS (建议使用反向代理)
-- [ ] 设置适当的 CORS 策略
-- [ ] 配置日志轮转
-- [ ] 设置监控告警
-
-## 🏪 mopai 三处登录位
-
-### 1. 系统启动登录（设备/主机台）
-- **用途**: 设备首次启动或重启后的身份验证
-- **流程**: 设备使用预配置的设备证明进行初始认证
-- **特点**: 长期有效，支持 30 天滑动续期
-```bash
-# 设备启动时的认证流程
-POST /oauth/token
-{
-  "grant_type": "authorization_code",
-  "client_id": "mopai-host",
-  "device_proof": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
-}
-```
-
-### 2. 系统使用登录（操作员）
-- **用途**: 门店操作员在已认证设备上的用户登录
-- **流程**: 用户名密码 + 设备证明双重验证
-- **特点**: 基于用户会话，支持快速切换
-```bash
-# 操作员登录（在已认证设备上）
-POST /login
-{
-  "email": "operator@store.com",
-  "password": "password",
-  "device_id": "device_123"
-}
-```
-
-### 3. 老板控制台登录
-- **用途**: 管理端访问，查看数据和配置
-- **流程**: 标准 OAuth2 授权码流程
-- **特点**: Web 端访问，支持多租户管理
-```bash
-# 老板控制台登录重定向
-GET /oauth/authorize?client_id=mopai-web&redirect_uri=...&response_type=code
-```
-
-## 🔄 前端无感刷新 AT 建议
-
-### 实现策略
-1. **到期前缓冲刷新**: AT 到期前 2-3 分钟自动刷新
-2. **失败延迟重试**: 刷新失败时使用指数退避策略
-3. **业务请求排队**: 刷新过程中缓存业务请求，完成后重放
-4. **幂等重放保护**: 避免重复请求导致的副作用
-
-### 示例代码
-```javascript
-class TokenManager {
+// auth.js - 前端认证模块
+class AuthService {
   constructor() {
-    this.refreshPromise = null;
-    this.pendingRequests = [];
+    this.authServer = 'http://localhost:8080';
+    this.clientId = 'ploml-web';
+    this.redirectUri = window.location.origin + '/auth/callback';
   }
 
-  async getValidToken() {
-    const token = this.getStoredToken();
+  // 跳转到登录页面
+  login() {
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: this.clientId,
+      redirect_uri: this.redirectUri,
+      scope: 'openid profile',
+      state: this.generateState()
+    });
     
-    // 检查是否需要刷新（到期前 3 分钟）
-    if (this.shouldRefresh(token)) {
-      return await this.refreshToken();
-    }
-    
-    return token.access_token;
+    window.location.href = `${this.authServer}/oauth2/authorize?${params}`;
   }
 
-  shouldRefresh(token) {
-    const bufferTime = 3 * 60 * 1000; // 3 分钟缓冲
-    const expiryTime = token.issued_at + (token.expires_in * 1000);
-    return Date.now() + bufferTime >= expiryTime;
-  }
-
-  async refreshToken() {
-    // 防止并发刷新
-    if (this.refreshPromise) {
-      return await this.refreshPromise;
+  // 处理授权回调
+  async handleCallback(code, state) {
+    if (!this.validateState(state)) {
+      throw new Error('Invalid state parameter');
     }
 
-    this.refreshPromise = this.doRefresh();
-    
-    try {
-      const newToken = await this.refreshPromise;
-      this.replayPendingRequests(newToken);
-      return newToken;
-    } finally {
-      this.refreshPromise = null;
-    }
-  }
-
-  async doRefresh() {
-    const deviceProof = await this.generateDeviceProof(); // mopai 需要
-    
-    const response = await fetch('/oauth/token', {
+    const response = await fetch(`${this.authServer}/oauth2/token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'refresh_token',
-        refresh_token: this.getStoredToken().refresh_token,
-        device_proof: deviceProof // mopai 必需，ploml 可选
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: this.clientId,
+        redirect_uri: this.redirectUri
       })
     });
 
-    if (!response.ok) {
-      throw new Error('Token refresh failed');
+    const tokens = await response.json();
+    this.storeTokens(tokens);
+    return tokens;
+  }
+
+  // 自动刷新Token
+  async refreshToken() {
+    const refreshToken = localStorage.getItem('refresh_token');
+    if (!refreshToken) {
+      this.login();
+      return;
     }
 
-    const newToken = await response.json();
-    this.storeToken(newToken);
-    return newToken;
-  }
-
-  replayPendingRequests(token) {
-    this.pendingRequests.forEach(({ resolve, request }) => {
-      // 使用新 token 重新发起请求
-      resolve(this.makeRequestWithToken(request, token.access_token));
+    const response = await fetch(`${this.authServer}/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: this.clientId
+      })
     });
-    this.pendingRequests = [];
+
+    if (response.ok) {
+      const tokens = await response.json();
+      this.storeTokens(tokens);
+      return tokens;
+    } else {
+      this.login();
+    }
   }
 }
 ```
 
-## 📝 配额限制说明
+#### 2. **HTTP拦截器配置**
 
-### 临时方案
-当前版本使用本地硬限制配额控制：
-- **员工配额**: Trial(3) | Basic(3) | Standard(5) | Pro(10) | Professor(18)
-- **设备配额**: Basic(0) | Standard(1) | Pro(3) | Professor(5)
-- **控制开关**: `SUBS_ENABLE_LOCAL_QUOTA_ENFORCE=true`
+```javascript
+// axios配置
+import axios from 'axios';
 
-### 后续升级
-后续版本将对接订阅服务 API，支持：
-- 实时配额查询
-- 动态计划调整  
-- 使用量统计
-- 跨店配额共享
+const apiClient = axios.create({
+  baseURL: process.env.REACT_APP_API_BASE_URL
+});
 
-## 📖 API 文档
+// 请求拦截器 - 添加Token
+apiClient.interceptors.request.use(config => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
-### v0.2.8-p2 管理端点
+// 响应拦截器 - 处理Token过期
+apiClient.interceptors.response.use(
+  response => response,
+  async error => {
+    if (error.response?.status === 401) {
+      const authService = new AuthService();
+      try {
+        await authService.refreshToken();
+        // 重试原请求
+        return apiClient.request(error.config);
+      } catch (refreshError) {
+        // 刷新失败，跳转登录
+        authService.login();
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+```
 
-#### 配置管理
+#### 3. **React组件示例**
+
+```jsx
+// LoginPage.jsx
+import React, { useState } from 'react';
+
+const LoginPage = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [captcha, setCaptcha] = useState('');
+  const [needsCaptcha, setNeedsCaptcha] = useState(false);
+
+  useEffect(() => {
+    // 检查是否需要验证码
+    if (email) {
+      checkCaptchaStatus(email);
+    }
+  }, [email]);
+
+  const checkCaptchaStatus = async (email) => {
+    const response = await fetch(`/identity/captcha-status?email=${email}`);
+    const data = await response.json();
+    setNeedsCaptcha(data.captcha_required);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    const response = await fetch('/identity/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, captcha })
+    });
+
+    if (response.ok) {
+      // 登录成功，开始OAuth2流程
+      const authService = new AuthService();
+      authService.login();
+    } else {
+      const error = await response.json();
+      handleLoginError(error);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="邮箱"
+        required
+      />
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="密码"
+        required
+      />
+      {needsCaptcha && (
+        <ReCAPTCHA
+          sitekey={process.env.REACT_APP_RECAPTCHA_SITE_KEY}
+          onChange={setCaptcha}
+        />
+      )}
+      <button type="submit">登录</button>
+    </form>
+  );
+};
+```
+
+### 📱 移动端集成
+
+#### React Native示例
+```javascript
+// AuthService.js for React Native
+import { AuthSession } from 'expo-auth-session';
+
+class MobileAuthService {
+  constructor() {
+    this.authServer = 'https://auth.tymoe.com';
+    this.clientId = 'tymoe-mobile';
+  }
+
+  async login() {
+    const redirectUri = AuthSession.makeRedirectUri();
+    
+    const authUrl = `${this.authServer}/oauth2/authorize` +
+      `?response_type=code` +
+      `&client_id=${this.clientId}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&scope=openid profile`;
+
+    const result = await AuthSession.startAsync({ authUrl });
+    
+    if (result.type === 'success' && result.params.code) {
+      return this.exchangeCodeForTokens(result.params.code, redirectUri);
+    }
+  }
+}
+```
+
+## 开发指南
+
+### 🛠️ 开发环境设置
+
+#### 1. **本地开发工具**
 ```bash
-# 重新加载产品客户端映射
-POST /admin/config/reload-product-map
-Authorization: Bearer <admin_token>
+# 安装全局工具
+npm install -g tsx prisma
 
-# 响应示例
-{
-  "success": true,
-  "message": "Product client mapping reloaded successfully",
-  "mapping": {
-    "web-ploml": "ploml",
-    "web-mopai": "mopai"
+# VS Code插件推荐
+code --install-extension Prisma.prisma
+code --install-extension bradlc.vscode-tailwindcss
+code --install-extension ms-vscode.vscode-typescript-next
+```
+
+#### 2. **数据库管理**
+```bash
+# 启动Prisma Studio
+npx prisma studio
+
+# 重置数据库（开发环境）
+npx prisma migrate reset
+
+# 生成新的迁移
+npx prisma migrate dev --name add_new_feature
+
+# 查看数据库状态
+npx prisma migrate status
+```
+
+#### 3. **Redis管理**
+```bash
+# 连接Redis
+redis-cli
+
+# 查看所有键
+KEYS authsvc:*
+
+# 清空开发环境数据
+FLUSHDB
+
+# 监控Redis操作
+MONITOR
+```
+
+### 🧪 测试策略
+
+#### 单元测试
+```javascript
+// tests/services/token.test.js
+import { describe, test, expect } from '@jest/globals';
+import { TokenService } from '../src/services/token.js';
+
+describe('TokenService', () => {
+  test('should generate valid access token', async () => {
+    const tokenService = new TokenService();
+    const token = await tokenService.signAccessToken({
+      sub: 'user-123',
+      roles: ['EMPLOYEE'],
+      scopes: ['read'],
+      organizationId: 'org-123'
+    });
+    
+    expect(token).toBeDefined();
+    expect(typeof token).toBe('string');
+  });
+});
+```
+
+#### 集成测试
+```javascript
+// tests/api/oauth2.test.js
+import request from 'supertest';
+import { app } from '../src/app.js';
+
+describe('OAuth2 API', () => {
+  test('POST /oauth2/token should return tokens', async () => {
+    const response = await request(app)
+      .post('/oauth2/token')
+      .send({
+        grant_type: 'authorization_code',
+        code: 'valid_auth_code',
+        client_id: 'test-client'
+      });
+    
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty('access_token');
+    expect(response.body).toHaveProperty('refresh_token');
+  });
+});
+```
+
+### 🔄 开发流程
+
+#### 1. **功能开发流程**
+```bash
+# 1. 创建功能分支
+git checkout -b feature/new-oauth-flow
+
+# 2. 数据库变更
+npx prisma migrate dev --name add_new_oauth_flow
+
+# 3. 实现功能
+# - 更新Prisma schema
+# - 实现Service层逻辑
+# - 添加Controller层接口
+# - 编写测试用例
+
+# 4. 测试
+npm run test
+npm run test:e2e
+
+# 5. 类型检查和构建
+npm run build
+
+# 6. 提交代码
+git add .
+git commit -m "feat: implement new oauth flow"
+
+# 7. 推送并创建PR
+git push origin feature/new-oauth-flow
+```
+
+#### 2. **数据库迁移最佳实践**
+
+```sql
+-- 迁移文件命名规范
+-- 20231201120000_add_device_management.sql
+
+-- 添加表
+CREATE TABLE "Device" (
+    "id" TEXT NOT NULL,
+    "name" TEXT,
+    "organizationId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT "Device_pkey" PRIMARY KEY ("id")
+);
+
+-- 添加索引
+CREATE INDEX "Device_organizationId_idx" ON "Device"("organizationId");
+
+-- 添加外键约束
+ALTER TABLE "Device" ADD CONSTRAINT "Device_organizationId_fkey" 
+FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+```
+
+### 📝 代码规范
+
+#### TypeScript规范
+```typescript
+// 接口定义
+interface CreateUserRequest {
+  email: string;
+  password: string;
+  name?: string;
+  phone?: string;
+}
+
+// Service类实现
+export class UserService {
+  private readonly prisma = prisma;
+
+  async createUser(request: CreateUserRequest): Promise<User> {
+    // 验证输入
+    this.validateCreateUserRequest(request);
+    
+    // 业务逻辑
+    const hashedPassword = await bcrypt.hash(request.password, 10);
+    
+    // 数据操作
+    return this.prisma.user.create({
+      data: {
+        email: request.email,
+        passwordHash: hashedPassword,
+        name: request.name,
+        phone: request.phone
+      }
+    });
+  }
+
+  private validateCreateUserRequest(request: CreateUserRequest): void {
+    if (!this.isValidEmail(request.email)) {
+      throw new Error('invalid_email');
+    }
+    
+    if (!this.isStrongPassword(request.password)) {
+      throw new Error('weak_password');
+    }
+  }
+}
+```
+
+### 🚀 后续服务开发注意事项
+
+#### 1. **微服务架构原则**
+- **单一职责**：每个服务只负责特定的业务领域
+- **数据隔离**：避免跨服务的数据库直接访问
+- **API优先**：服务间通过定义良好的API通信
+- **无状态设计**：服务实例应该是无状态的
+
+#### 2. **与Auth Service集成**
+```typescript
+// 新服务中的认证中间件
+import axios from 'axios';
+
+export const authMiddleware = async (req: Request, res: Response, next: NextFunction) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  if (!token) {
+    return res.status(401).json({ error: 'missing_token' });
+  }
+
+  try {
+    // 调用Auth Service验证Token
+    const response = await axios.post('http://auth-service:8080/oauth2/introspect', 
+      `token=${token}`,
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`
+        }
+      }
+    );
+
+    if (response.data.active) {
+      req.user = response.data;
+      next();
+    } else {
+      return res.status(401).json({ error: 'invalid_token' });
+    }
+  } catch (error) {
+    return res.status(401).json({ error: 'token_validation_failed' });
+  }
+};
+```
+
+#### 3. **组织权限检查**
+```typescript
+// 权限检查中间件
+export const requireOrganizationAccess = (requiredRole?: Role) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = req.user; // 来自认证中间件
+    const organizationId = req.params.organizationId || req.body.organizationId;
+
+    // 检查用户是否属于该组织
+    if (user.organizationId !== organizationId) {
+      return res.status(403).json({ error: 'access_denied' });
+    }
+
+    // 检查角色权限（如果需要）
+    if (requiredRole && !hasRequiredRole(user.roles, requiredRole)) {
+      return res.status(403).json({ error: 'insufficient_permissions' });
+    }
+
+    next();
+  };
+};
+
+// 角色权限等级检查
+const hasRequiredRole = (userRoles: string[], requiredRole: Role): boolean => {
+  const roleHierarchy = {
+    'OWNER': 3,
+    'MANAGER': 2,
+    'EMPLOYEE': 1
+  };
+
+  const maxUserRole = Math.max(...userRoles.map(role => roleHierarchy[role] || 0));
+  const requiredLevel = roleHierarchy[requiredRole];
+
+  return maxUserRole >= requiredLevel;
+};
+```
+
+#### 4. **服务发现与配置**
+```typescript
+// 服务配置管理
+export const ServiceConfig = {
+  authService: {
+    baseUrl: process.env.AUTH_SERVICE_URL || 'http://auth-service:8080',
+    clientId: process.env.AUTH_CLIENT_ID || 'internal-service',
+    clientSecret: process.env.AUTH_CLIENT_SECRET || 'super-secret'
   },
-  "timestamp": "2024-03-15T10:30:00.000Z"
-}
-```
-
-#### 配额管理
-```bash
-# 查询组织配额使用情况
-GET /admin/orgs/:orgId/quota?product=ploml&locationId=store-001
-Authorization: Bearer <admin_token>
-
-# 响应示例
-{
-  "success": true,
-  "data": {
-    "orgId": "org-123",
-    "product": "ploml", 
-    "plan": "standard",
-    "quotas": {
-      "staff": 5,
-      "devices": 0
-    },
-    "usage": {
-      "staff": 3,
-      "devices": 0
-    },
-    "staffExceeded": false,
-    "devicesExceeded": false
+  database: {
+    url: process.env.DATABASE_URL || 'postgresql://localhost:5432/service_db'
+  },
+  redis: {
+    url: process.env.REDIS_URL || 'redis://localhost:6379',
+    namespace: process.env.SERVICE_NAME || 'unknown-service'
   }
+};
+```
+
+## 部署运维
+
+### 🐳 Docker化部署
+
+#### Dockerfile
+```dockerfile
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY . .
+RUN npx prisma generate
+RUN npm run build
+
+FROM node:18-alpine AS runtime
+
+RUN apk add --no-cache dumb-init
+WORKDIR /app
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/prisma ./prisma
+
+EXPOSE 8080
+
+USER node
+CMD ["dumb-init", "node", "dist/index.js"]
+```
+
+#### docker-compose.yml
+```yaml
+version: '3.8'
+
+services:
+  auth-service:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://auth_user:password@postgres:5432/tymoe_auth
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - tymoe-network
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: tymoe_auth
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tymoe-network
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    networks:
+      - tymoe-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  tymoe-network:
+    driver: bridge
+```
+
+### 📊 监控与日志
+
+#### 健康检查端点
+```typescript
+// /health endpoint
+app.get('/health', async (req, res) => {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    checks: {
+      database: await checkDatabase(),
+      redis: await checkRedis(),
+      smtp: await checkSMTP()
+    }
+  };
+
+  const isHealthy = Object.values(health.checks).every(check => check.status === 'ok');
+  
+  res.status(isHealthy ? 200 : 503).json(health);
+});
+```
+
+#### 日志配置
+```typescript
+import winston from 'winston';
+
+export const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'logs/combined.log' })
+  ]
+});
+
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(new winston.transports.Console({
+    format: winston.format.simple()
+  }));
 }
 ```
 
-#### 系统监控
-```bash
-# 健康检查
-GET /admin/health
-Authorization: Bearer <admin_token>
+### 🔧 运维脚本
 
-# 响应示例
-{
-  "success": true,
-  "data": {
-    "status": "healthy",
-    "timestamp": "2024-03-15T10:30:00.000Z",
-    "uptime": 86400,
-    "memory": {
-      "rss": 45678592,
-      "heapTotal": 23456789,
-      "heapUsed": 12345678
-    },
-    "version": "0.2.8-p2",
-    "node": "v18.17.0"
-  }
-}
+#### 密钥轮换
+```bash
+#!/bin/bash
+# scripts/rotate-keys.sh
+
+echo "Starting JWT key rotation..."
+
+# 1. 生成新密钥
+npm run rotate:key
+
+# 2. 等待传播时间
+echo "Waiting for key propagation..."
+sleep 300  # 5分钟
+
+# 3. 清理过期密钥
+npm run retire:keys
+
+echo "Key rotation completed successfully!"
 ```
 
-#### 产品中间件
+#### 数据库备份
 ```bash
-# 产品判定头部示例
-X-Product: mopai                    # 直接指定产品
-?product=ploml                      # 查询参数指定
+#!/bin/bash
+# scripts/backup-db.sh
 
-# 客户端映射 fallback
-client_id=web-mopai → product=mopai
-client_id=unknown → 按 UNKNOWN_PRODUCT_STRATEGY 处理
+BACKUP_DIR="/backups/auth-service"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+BACKUP_FILE="${BACKUP_DIR}/auth_backup_${TIMESTAMP}.sql"
+
+mkdir -p $BACKUP_DIR
+
+pg_dump $DATABASE_URL > $BACKUP_FILE
+
+if [ $? -eq 0 ]; then
+    echo "Database backup completed: $BACKUP_FILE"
+    # 保留最近7天的备份
+    find $BACKUP_DIR -name "auth_backup_*.sql" -mtime +7 -delete
+else
+    echo "Database backup failed!"
+    exit 1
+fi
 ```
-
-### 设备管理端点
-
-#### 创建设备
-- `POST /admin/devices`
-- 需要管理员权限
-- 返回设备信息和密钥（仅创建时）
-
-#### 列出设备
-- `GET /admin/devices?orgId=xxx`
-- 支持按组织、客户端、类型、状态筛选
-
-#### 撤销设备
-- `POST /admin/devices/:deviceId/revoke`
-- 可选撤销原因
-
-#### 重新生成密钥
-- `POST /admin/devices/:deviceId/regenerate-secret`
-- 返回新密钥（仅生成时）
-
-### OAuth2 端点
-
-#### 令牌端点（增强）
-- `POST /oauth/token`
-- 支持 `device_proof` 参数
-- 根据产品应用不同刷新策略
-
-#### 内省端点
-- `POST /oauth/introspect`
-- 验证访问令牌有效性
-- 返回令牌元数据
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📝 许可证
-
-MIT License
-
-## 📞 支持
-
-- 文档: [内部文档链接]
-- Issues: [GitHub Issues]
-- 技术支持: [内部联系方式]
 
 ---
 
-**auth-service v0.2.8** - 安全、可扩展的企业级认证服务
+## 📞 支持与维护
+
+### 问题排查
+
+#### 常见问题
+1. **Token验证失败**
+   - 检查密钥是否已生成并处于ACTIVE状态
+   - 验证客户端ID和Secret配置
+   - 确认Token未过期
+
+2. **邮件发送失败**
+   - 检查SMTP配置
+   - 验证邮件服务商设置
+   - 查看审计日志
+
+3. **Redis连接问题**
+   - 检查Redis服务状态
+   - 验证连接配置和密码
+   - 查看网络连接
+
+### 联系方式
+
+- **技术支持**：tech@tymoe.com
+- **安全问题**：security@tymoe.com
+- **文档更新**：请提交GitHub Issue
+
+---
+
+*最后更新：2024年12月*
+*版本：v0.2.11*

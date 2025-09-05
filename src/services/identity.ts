@@ -11,15 +11,14 @@ import { encryptShortLived, decryptShortLived, isEncKeyAvailable } from '../util
 interface CreateUserArgs {
   email: string;
   password: string;
-  tenantId: string;
-  subdomain?: string;
+  name?: string;
   phone?: string;
   address?: string;
 }
 
 interface UpdateProfileArgs {
   email?: string;
-  subdomain?: string;
+  name?: string;
   phone?: string;
   address?: string;
 }
@@ -45,8 +44,7 @@ export class IdentityService {
         where: { id: existingUser.id },
         data: {
           passwordHash,
-          tenantId: args.tenantId,
-          subdomain: args.subdomain,
+          name: args.name,
           phone: args.phone,
           address: args.address,
         }
@@ -54,23 +52,12 @@ export class IdentityService {
       return { user: updatedUser, created: false };
     }
 
-    // Check subdomain uniqueness if provided
-    if (args.subdomain) {
-      const existingSubdomain = await prisma.user.findUnique({
-        where: { subdomain: args.subdomain.toLowerCase() }
-      });
-      if (existingSubdomain) {
-        throw new Error('subdomain_taken');
-      }
-    }
-
     // Create new user
     const newUser = await prisma.user.create({
       data: {
         email: args.email,
         passwordHash,
-        tenantId: args.tenantId,
-        subdomain: args.subdomain?.toLowerCase(),
+        name: args.name,
         phone: args.phone,
         address: args.address,
       }
@@ -80,7 +67,7 @@ export class IdentityService {
   }
 
   // v0.2.7: short-lived encrypted code reuse
-  async issueEmailVerification(userId: string, purpose: string, sentTo: string, tenantId: string) {
+  async issueEmailVerification(userId: string, purpose: string, sentTo: string) {
     const now = new Date();
     const reuseWindowStart = new Date(now.getTime() - env.verificationCodeReuseWindowSec * 1000);
     
@@ -175,7 +162,6 @@ export class IdentityService {
       await prisma.emailVerification.create({
         data: {
           userId,
-          tenantId,
           selector,
           tokenHash,
           purpose,
@@ -308,7 +294,7 @@ export class IdentityService {
   }
 
   // v0.2.7: short-lived encrypted code reuse  
-  async issuePasswordReset(userId: string, sentTo: string, tenantId: string) {
+  async issuePasswordReset(userId: string, sentTo: string) {
     const now = new Date();
     const reuseWindowStart = new Date(now.getTime() - env.verificationCodeReuseWindowSec * 1000);
     
@@ -401,7 +387,6 @@ export class IdentityService {
       await prisma.passwordReset.create({
         data: {
           userId,
-          tenantId,
           selector,
           tokenHash,
           sentTo,
@@ -538,22 +523,7 @@ export class IdentityService {
     if (patch.phone !== undefined) updates.phone = patch.phone;
     if (patch.address !== undefined) updates.address = patch.address;
 
-    // Handle subdomain with uniqueness check
-    if (patch.subdomain !== undefined) {
-      const normalized = patch.subdomain?.toLowerCase();
-      if (normalized) {
-        const existing = await prisma.user.findFirst({
-          where: {
-            subdomain: normalized,
-            id: { not: userId }
-          }
-        });
-        if (existing) {
-          throw new Error('subdomain_taken');
-        }
-      }
-      updates.subdomain = normalized;
-    }
+    // Note: subdomain functionality removed in simplified architecture
 
     // Handle email change (requires verification)
     if (patch.email !== undefined) {
@@ -570,7 +540,7 @@ export class IdentityService {
       // For email changes, issue verification but don't update immediately
       const user = await prisma.user.findUnique({ where: { id: userId } });
       if (user) {
-        await this.issueEmailVerification(userId, 'change_email', patch.email, user.tenantId);
+        await this.issueEmailVerification(userId, 'change_email', patch.email);
       }
       // Don't include email in updates - it will be updated when verification is consumed
     }

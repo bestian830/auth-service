@@ -7,11 +7,10 @@ export interface AccessClaims {
   exp: number;
   iss: string;
   aud: string;
-  tenant_id: string;
+  organizationId?: string | null;
   roles?: string[];
   scopes?: string[];
-  location_id?: string | null;
-  device_id?: string | null;
+  deviceId?: string | null;
   acr?: ACR;
   amr?: string[];
 }

@@ -13,55 +13,55 @@ interface Template {
 
 export const Templates = {
   signupCode: (args: TemplateArgs): Template => ({
-    subject: `${args.brand}｜邮箱验证`,
+    subject: `${args.brand} | Email Verification`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>邮箱验证</h2>
-        <p>您好，</p>
-        <p>感谢您注册 ${args.brand}！请使用以下验证码完成邮箱验证：</p>
+        <h2>Email Verification</h2>
+        <p>Hello,</p>
+        <p>Thank you for signing up for ${args.brand}! Please use the following verification code to complete your email verification:</p>
         <div style="background: #f5f5f5; padding: 15px; margin: 20px 0; text-align: center; font-size: 18px; font-weight: bold;">
           ${args.selector}.${args.token}
         </div>
-        <p>此验证码将在 ${args.minutes} 分钟内有效。</p>
-        <p>如果您没有注册 ${args.brand} 账户，请忽略此邮件。</p>
+        <p>This verification code will expire in ${args.minutes} minutes.</p>
+        <p>If you did not sign up for a ${args.brand} account, please ignore this email.</p>
         <hr>
-        <p style="color: #666; font-size: 12px;">此邮件由系统自动发送，请勿回复。</p>
+        <p style="color: #666; font-size: 12px;">This email was sent automatically by the system. Please do not reply.</p>
       </div>
     `
   }),
 
   resetCode: (args: TemplateArgs): Template => ({
-    subject: `${args.brand}｜重置密码`,
+    subject: `${args.brand} | Password Reset`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>重置密码</h2>
-        <p>您好，</p>
-        <p>我们收到了您的密码重置请求。请使用以下重置码设置新密码：</p>
+        <h2>Password Reset</h2>
+        <p>Hello,</p>
+        <p>We received your password reset request. Please use the following reset code to set a new password:</p>
         <div style="background: #f5f5f5; padding: 15px; margin: 20px 0; text-align: center; font-size: 18px; font-weight: bold;">
           ${args.selector}.${args.token}
         </div>
-        <p>此重置码将在 ${args.minutes} 分钟内有效。</p>
-        <p>如果您没有请求重置密码，请忽略此邮件或联系我们的客服团队。</p>
+        <p>This reset code will expire in ${args.minutes} minutes.</p>
+        <p>If you did not request a password reset, please ignore this email or contact our customer service team.</p>
         <hr>
-        <p style="color: #666; font-size: 12px;">此邮件由系统自动发送，请勿回复。</p>
+        <p style="color: #666; font-size: 12px;">This email was sent automatically by the system. Please do not reply.</p>
       </div>
     `
   }),
 
   changeEmail: (args: TemplateArgs): Template => ({
-    subject: `${args.brand}｜确认邮箱变更`,
+    subject: `${args.brand} | Confirm Email Change`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>确认邮箱变更</h2>
-        <p>您好，</p>
-        <p>我们收到了您的邮箱变更请求。请使用以下验证码确认新邮箱：</p>
+        <h2>Confirm Email Change</h2>
+        <p>Hello,</p>
+        <p>We received your email change request. Please use the following verification code to confirm your new email:</p>
         <div style="background: #f5f5f5; padding: 15px; margin: 20px 0; text-align: center; font-size: 18px; font-weight: bold;">
           ${args.selector}.${args.token}
         </div>
-        <p>此验证码将在 ${args.minutes} 分钟内有效。</p>
-        <p>如果您没有请求变更邮箱，请立即联系我们的客服团队。</p>
+        <p>This verification code will expire in ${args.minutes} minutes.</p>
+        <p>If you did not request an email change, please contact our customer service team immediately.</p>
         <hr>
-        <p style="color: #666; font-size: 12px;">此邮件由系统自动发送，请勿回复。</p>
+        <p style="color: #666; font-size: 12px;">This email was sent automatically by the system. Please do not reply.</p>
       </div>
     `
   })

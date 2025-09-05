@@ -8,10 +8,10 @@ import { env } from './config/env.js';
 import oidcRoutes from './routes/oidc.js';
 import identityRoutes from './routes/identity.js';
 import adminRoutes from './routes/admin.js';
+import organizationRoutes from './routes/organizations.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
-import { preloadProductMappings } from './config/products.js';
 import { metricsAuth } from './middleware/metricsAuth.js';
 
 // 创建 logger
@@ -98,6 +98,7 @@ app.get('/metrics', metricsAuth, async (_req, res) => {
 app.use(oidcRoutes);
 app.use('/identity', identityRoutes);
 app.use('/admin', adminRoutes);
+app.use('/organizations', organizationRoutes);
 
 // 错误处理中间件 - 生产环境脱敏
 app.use((err: any, req: any, res: any, _next: any) => {
@@ -118,8 +119,7 @@ async function startServer() {
   try {
     // 预热产品映射缓存
     console.log('🔄 Loading product mappings...');
-    await preloadProductMappings();
-    
+      
     // 验证邮件配置
     const { testEmailConfiguration } = await import('./services/mailer.js');
     const emailTest = await testEmailConfiguration();

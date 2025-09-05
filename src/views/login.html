@@ -17,15 +17,15 @@
 </head>
 <body>
   <div class="card">
-    <h1>登录 tymoe</h1>
-    <p class="muted">请输入邮箱与密码继续授权。</p>
+    <h1>Sign in to tymoe</h1>
+    <p class="muted">Enter your email and password to continue authorization.</p>
     <!-- action=/login -->
     <form method="POST" action="/login">
       <input type="email" name="email" placeholder="email" required />
       <input type="password" name="password" placeholder="password" required />
       <input type="hidden" name="return_to" value="{{return_to}}" />
       <input type="hidden" name="_csrf" value="{{csrf}}" />
-      <button type="submit">登录</button>
+      <button type="submit">Sign in</button>
       {{#if error}}<p class="err">{{error}}</p>{{/if}}
     </form>
   </div>
