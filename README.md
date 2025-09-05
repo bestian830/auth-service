@@ -23,7 +23,7 @@ Auth Service是Tymoe微服务生态系统的**身份认证中心**，专注于�
 ### 设计理念
 
 - **简化架构**：专注身份认证，不处理业务逻辑
-- **标准合规**：完全符合OAuth2/OIDC规范
+- **API优先**：纯API接口，前端完全控制UI
 - **安全至上**：多层安全防护，支持CAPTCHA、速率限制、账户锁定
 - **组织导向**：基于组织的权限管理模型
 - **可扩展性**：支持设备认证、多租户隔离
@@ -60,7 +60,12 @@ Auth Service是Tymoe微服务生态系统的**身份认证中心**，专注于�
 
 #### 1. **与业务服务的通信协议**
 
-**标准Bearer Token认证：**
+**标准Bearer Token认证：**SMTP_HOST=mail.eazy.solutions
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=noreply@tymoe.com
+SMTP_PASS=&,48,RoneAD
+MAIL_FROM=Tymoe Technologies <noreply@tymoe.com>
 ```http
 Authorization: Bearer <access_token>
 ```
@@ -605,6 +610,17 @@ INSERT INTO "User" (
 - `authsvc:login_failures:<userId>` - 登录失败计数
 
 ## API接口
+
+> 📋 **详细的API使用示例和前端集成代码，请查看 [API_EXAMPLES.md](./API_EXAMPLES.md)**
+
+### 🎯 设计理念
+
+Auth Service v0.2.11 采用**纯API模式**：
+
+- ✅ **前端控制UI**：登录页面、注册表单完全由前端实现
+- ✅ **RESTful API**：标准的HTTP请求/响应
+- ✅ **JWT Token**：安全的无状态认证
+- ✅ **实时响应**：无页面跳转，单页应用体验
 
 ### 🔐 认证相关
 

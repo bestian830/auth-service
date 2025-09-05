@@ -1,5 +1,9 @@
 // src/config/env.validate.ts
+import dotenv from 'dotenv';
 import { z } from 'zod';
+
+// 确保在验证之前加载 .env 文件
+dotenv.config();
 
 const envSchema = z.object({
   // 基础配置
@@ -48,7 +52,7 @@ const envSchema = z.object({
   SMTP_SECURE: z.enum(['true', 'false']).optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  MAIL_FROM: z.string().email().optional(),
+  MAIL_FROM: z.string().optional(),
   
   // 验证码配置
   SIGNUP_CODE_TTL_SEC: z.string().regex(/^\d+$/).optional(),
