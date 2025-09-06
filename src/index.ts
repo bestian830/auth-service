@@ -120,6 +120,12 @@ async function startServer() {
     // 预热产品映射缓存
     console.log('🔄 Loading product mappings...');
       
+    // 确保至少有一个活动的JWT签名密钥
+    console.log('🔐 Initializing JWT signing keys...');
+    const { ensureOneActiveKey } = await import('./infra/keystore.js');
+    await ensureOneActiveKey();
+    console.log('✅ JWT signing keys ready');
+      
     // 验证邮件配置
     const { testEmailConfiguration } = await import('./services/mailer.js');
     const emailTest = await testEmailConfiguration();

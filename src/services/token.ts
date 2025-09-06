@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { prisma } from '../infra/prisma.js';
 import * as crypto from 'crypto';
 import { SignJWT, importPKCS8, JWTPayload } from 'jose';
+import { open } from '../infra/cryptoVault.js';
 
 export type AccessClaims = {
   jti: string; 
@@ -30,7 +31,9 @@ function resolveAudience(inputAud: string | string[] | undefined, organizationId
 async function getActivePrivateKey() {
   const k = await prisma.key.findFirst({ where: { status: 'ACTIVE' } });
   if (!k) throw new Error('no_active_key');
-  const pkcs8 = k.privatePem;
+  
+  // Decrypt private key if encrypted
+  const pkcs8 = env.keystoreEncKey ? open(k.privatePem) : k.privatePem;
   const privateKey = await importPKCS8(pkcs8, 'RS256');
   return { privateKey, kid: k.kid };
 }

@@ -1,10 +1,11 @@
 import { Request, Response } from 'express';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { prisma } from '../infra/prisma.js';
 import { env } from '../config/env.js';
 import { audit } from '../middleware/audit.js';
 import { IdentityService } from '../services/identity.js';
-import { revokeFamily } from '../services/token.js';
+import { revokeFamily, signAccessToken, issueRefreshFamily } from '../services/token.js';
 import { createRateLimiter, isRedisConnected } from '../infra/redis.js';
 import { verifyCaptcha } from '../middleware/captcha.js';
 import type { RefreshFamilyRow } from '../types/prisma.js';
@@ -12,7 +13,7 @@ import type { RefreshFamilyRow } from '../types/prisma.js';
 const identityService = new IdentityService();
 
 export async function register(req: Request, res: Response) {
-  const { email, password, name, phone, address } = req.body;
+  const { email, password, name, phone, address, organizationName } = req.body;
 
   // Always return success to prevent enumeration attacks
   const sendSuccessResponse = () => res.json({ ok: true });
@@ -20,26 +21,51 @@ export async function register(req: Request, res: Response) {
   try {
     if (!email || !password) {
       audit('register_invalid_request', { ip: req.ip, email: email || 'missing' });
-      return sendSuccessResponse();
+      return res.status(400).json({ error: 'missing_required_fields' });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      audit('register_invalid_email', { ip: req.ip, email });
+      return res.status(400).json({ error: 'invalid_email_format' });
     }
 
     const existingUser = await prisma.user.findUnique({
       where: { email }
     });
 
-    if (existingUser && existingUser.emailVerifiedAt) {
-      // User exists and verified - audit but don't send email
-      audit('register_conflict', { ip: req.ip, email, verified: true });
-      return sendSuccessResponse();
+    if (existingUser) {
+      if (existingUser.emailVerifiedAt) {
+        // User exists and verified - reject registration
+        audit('register_conflict', { ip: req.ip, email, verified: true });
+        return res.status(409).json({ error: 'email_already_registered' });
+      } else {
+        // User exists but not verified - allow re-sending verification
+        await identityService.issueEmailVerification(
+          existingUser.id,
+          'signup',
+          email
+        );
+        
+        audit('register_reverify', { 
+          ip: req.ip, 
+          email, 
+          userId: existingUser.id
+        });
+        
+        return sendSuccessResponse();
+      }
     }
 
-    // Create or reuse user and send verification email
+    // Create new user and send verification email
     const { user } = await identityService.createOrReuseUserForSignup({
       email,
       password,
       name,
       phone,
-      address
+      address,
+      organizationName
     });
 
     await identityService.issueEmailVerification(
@@ -57,6 +83,19 @@ export async function register(req: Request, res: Response) {
     return sendSuccessResponse();
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    
+    // Handle password validation errors
+    const passwordErrors = [
+      'password_required', 'password_too_short', 'password_too_long',
+      'password_needs_uppercase', 'password_needs_lowercase', 
+      'password_needs_digit', 'password_too_common'
+    ];
+    
+    if (passwordErrors.includes(errorMessage)) {
+      audit('register_password_validation', { ip: req.ip, email, error: errorMessage });
+      return res.status(400).json({ error: errorMessage });
+    }
+
     if (errorMessage === 'subdomain_taken') {
       audit('register_name_conflict', { ip: req.ip, email });
       return res.status(409).json({ error: 'subdomain_taken' });
@@ -76,14 +115,40 @@ export async function verify(req: Request, res: Response) {
       return res.status(400).json({ error: 'invalid_request' });
     }
 
-    // Parse code (selector.token format)
-    const codeParts = code.split('.');
-    if (codeParts.length !== 2) {
-      audit('verify_invalid_format', { ip: req.ip, email });
-      return res.status(400).json({ error: 'invalid_code' });
-    }
+    let selector: string;
+    let token: string;
 
-    const [selector, token] = codeParts;
+    // Support both formats: 6-digit numeric code OR selector.token format
+    if (/^\d{6}$/.test(code)) {
+      // 6-digit numeric code - find the corresponding selector in database
+      const tokenHash = crypto.createHash('sha256').update(code).digest('hex');
+      const verification = await prisma.emailVerification.findFirst({
+        where: {
+          tokenHash,
+          sentTo: email,
+          consumedAt: null,
+          expiresAt: { gt: new Date() }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      if (!verification) {
+        audit('verify_numeric_code_not_found', { ip: req.ip, email, codeLength: code.length });
+        return res.status(400).json({ error: 'invalid_code' });
+      }
+
+      selector = verification.selector;
+      token = code;
+    } else {
+      // Traditional selector.token format
+      const codeParts = code.split('.');
+      if (codeParts.length !== 2) {
+        audit('verify_invalid_format', { ip: req.ip, email });
+        return res.status(400).json({ error: 'invalid_code' });
+      }
+
+      [selector, token] = codeParts;
+    }
     
     const user = await identityService.consumeEmailVerification(selector, token);
 
@@ -231,12 +296,21 @@ export async function login(req: Request, res: Response) {
     }
 
     // Check user existence and verification
-    if (!user || !user.emailVerifiedAt) {
-      loginAttemptData.failureReason = 'user_not_found_or_unverified';
+    if (!user) {
+      loginAttemptData.failureReason = 'user_not_found';
       await prisma.loginAttempt.create({ data: loginAttemptData });
       
-      audit('login_fail', { ip, email, reason: 'user_not_found_or_unverified' });
+      audit('login_fail', { ip, email, reason: 'user_not_found' });
       return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    if (!user.emailVerifiedAt) {
+      loginAttemptData.failureReason = 'email_not_verified';
+      loginAttemptData.userId = user.id;
+      await prisma.loginAttempt.create({ data: loginAttemptData });
+      
+      audit('login_fail', { ip, email, userId: user.id, reason: 'email_not_verified' });
+      return res.status(403).json({ error: 'email_not_verified', message: 'Please verify your email before logging in' });
     }
 
     // Check database-level user lock (fallback if Redis is unavailable)
@@ -342,21 +416,96 @@ export async function login(req: Request, res: Response) {
       }
     });
 
-    // Store user info in session for OIDC flow
-    req.session = req.session || {};
-    req.session.userId = user.id;
-    req.session.email = user.email;
+    // Get user's organizations and roles for token claims
+    const userOrganizations = await prisma.userRole.findMany({
+      where: { userId: user.id },
+      select: {
+        id: true,
+        userId: true,
+        organizationId: true,
+        role: true,
+        status: true,
+        joinedAt: true,
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            status: true
+          }
+        }
+      },
+      orderBy: { joinedAt: 'asc' } // Primary organization first (earliest joined)
+    });
+
+    // Use primary organization (first one joined)
+    const primaryOrganization = userOrganizations[0];
+    const organizationId = primaryOrganization?.organizationId || null;
     
+    // Collect all roles from all organizations
+    const roles = userOrganizations.length > 0 ? userOrganizations.map(ur => ur.role) : [];
+    const scopes = ['openid', 'profile', 'email']; // Standard OIDC scopes
+
+    // Generate access token with user context
+    const accessToken = await signAccessToken({
+      sub: user.id,
+      roles,
+      scopes,
+      organizationId,
+      deviceId: null, // No device context for web login
+      aud: env.defaultAudPrefix || 'tymoe-service'
+    });
+
+    // Generate refresh token family
+    const { refreshId } = await issueRefreshFamily({
+      userId: user.id,
+      deviceId: null,
+      clientId: 'web-client', // Default web client
+      organizationId: organizationId || undefined
+    });
+
+    // Create refresh token string (family:id format)
+    const refreshToken = `${refreshId}`;
+
+    // Prepare user info for response
+    const userInfo = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      emailVerifiedAt: user.emailVerifiedAt,
+      organizations: userOrganizations.map(ur => ({
+        id: ur.organization.id,
+        name: ur.organization.name,
+        role: ur.role,
+        status: ur.organization.status
+      }))
+    };
+
     audit('login_success', { 
       ip, 
       email, 
       userId: user.id,
+      organizationId,
       captchaUsed: !!captcha
     });
     
-    res.json({ ok: true });
+    // Return OAuth2-style token response
+    res.json({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_type: 'Bearer',
+      expires_in: Number(env.accessTtlSec || 1800), // 30 minutes default
+      user: userInfo
+    });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    const errorStack = error instanceof Error ? error.stack : 'no_stack';
+    console.error('Login error:', { 
+      error: errorMessage, 
+      stack: errorStack, 
+      email, 
+      ip 
+    });
     audit('login_error', { ip, email, error: errorMessage });
     res.status(500).json({ error: 'server_error' });
   }
@@ -468,25 +617,29 @@ export async function logout(req: Request, res: Response) {
 export async function forgotPassword(req: Request, res: Response) {
   const { email } = req.body;
 
-  // Always return success to prevent enumeration
-  const sendSuccessResponse = () => res.json({ ok: true });
-
   try {
     if (!email) {
       audit('reset_invalid_request', { ip: req.ip });
-      return sendSuccessResponse();
+      return res.status(400).json({ error: 'missing_email' });
     }
 
     const user = await prisma.user.findUnique({
       where: { email }
     });
 
-    if (!user || !user.emailVerifiedAt) {
-      // User doesn't exist or not verified - audit but still return success
+    if (!user) {
+      // User doesn't exist - return clear error
       audit('reset_requested_nonexistent', { ip: req.ip, email });
-      return sendSuccessResponse();
+      return res.status(404).json({ error: 'user_not_found' });
     }
 
+    if (!user.emailVerifiedAt) {
+      // User exists but not verified - return clear error
+      audit('reset_requested_unverified', { ip: req.ip, email, userId: user.id });
+      return res.status(403).json({ error: 'email_not_verified', message: 'Please verify your email before requesting password reset' });
+    }
+
+    // Only verified users can reset password
     await identityService.issuePasswordReset(user.id, email);
 
     audit('reset_requested', { 
@@ -495,24 +648,57 @@ export async function forgotPassword(req: Request, res: Response) {
       userId: user.id 
     });
 
-    return sendSuccessResponse();
+    return res.json({ ok: true });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'unknown_error';
     audit('reset_error', { ip: req.ip, email, error: errorMessage });
-    return sendSuccessResponse(); // Still return success to prevent info disclosure
+    return res.status(500).json({ error: 'server_error' });
   }
 }
 
 export async function resetPassword(req: Request, res: Response) {
-  const { selector, token, password } = req.body;
+  const { selector, token, password, code, email } = req.body;
 
   try {
-    if (!selector || !token || !password) {
+    let finalSelector: string;
+    let finalToken: string;
+
+    // Support both formats: 6-digit code OR selector+token format
+    if (code && email && /^\d{6}$/.test(code)) {
+      // 6-digit numeric code - find the corresponding selector in database
+      const tokenHash = crypto.createHash('sha256').update(code).digest('hex');
+      const reset = await prisma.passwordReset.findFirst({
+        where: {
+          tokenHash,
+          sentTo: email,
+          consumedAt: null,
+          expiresAt: { gt: new Date() }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      if (!reset) {
+        audit('password_reset_code_not_found', { ip: req.ip, email, codeLength: code.length });
+        return res.status(400).json({ error: 'invalid_code' });
+      }
+
+      finalSelector = reset.selector;
+      finalToken = code;
+    } else if (selector && token) {
+      // Traditional selector.token format
+      finalSelector = selector;
+      finalToken = token;
+    } else {
       audit('password_reset_invalid_request', { ip: req.ip });
       return res.status(400).json({ error: 'invalid_request' });
     }
 
-    const user = await identityService.consumePasswordReset(selector, token, password);
+    if (!password) {
+      audit('password_reset_missing_password', { ip: req.ip });
+      return res.status(400).json({ error: 'missing_password' });
+    }
+
+    const user = await identityService.consumePasswordReset(finalSelector, finalToken, password);
 
     audit('password_reset', { 
       ip: req.ip, 

@@ -14,6 +14,7 @@ interface CreateUserArgs {
   name?: string;
   phone?: string;
   address?: string;
+  organizationName?: string;
 }
 
 interface UpdateProfileArgs {
@@ -26,7 +27,54 @@ interface UpdateProfileArgs {
 export class IdentityService {
   private mailer = getMailer();
 
+  /**
+   * Validate password strength
+   * Requirements: min 8 chars, uppercase, lowercase, digit
+   */
+  validatePassword(password: string): { valid: boolean; error?: string } {
+    if (!password) {
+      return { valid: false, error: 'password_required' };
+    }
+
+    if (password.length < 8) {
+      return { valid: false, error: 'password_too_short' };
+    }
+
+    if (password.length > 128) {
+      return { valid: false, error: 'password_too_long' };
+    }
+
+    // Check for at least one uppercase letter
+    if (!/[A-Z]/.test(password)) {
+      return { valid: false, error: 'password_needs_uppercase' };
+    }
+
+    // Check for at least one lowercase letter
+    if (!/[a-z]/.test(password)) {
+      return { valid: false, error: 'password_needs_lowercase' };
+    }
+
+    // Check for at least one digit
+    if (!/\d/.test(password)) {
+      return { valid: false, error: 'password_needs_digit' };
+    }
+
+    // Common weak passwords
+    const weakPasswords = ['password', '12345678', 'qwerty123', 'Password123'];
+    if (weakPasswords.includes(password.toLowerCase().replace(/\d/g, ''))) {
+      return { valid: false, error: 'password_too_common' };
+    }
+
+    return { valid: true };
+  }
+
   async createOrReuseUserForSignup(args: CreateUserArgs) {
+    // Validate password strength
+    const passwordValidation = this.validatePassword(args.password);
+    if (!passwordValidation.valid) {
+      throw new Error(passwordValidation.error);
+    }
+
     const existingUser = await prisma.user.findUnique({
       where: { email: args.email }
     });
@@ -62,6 +110,26 @@ export class IdentityService {
         address: args.address,
       }
     });
+
+    // Create organization if provided
+    if (args.organizationName && args.organizationName.trim()) {
+      const organization = await prisma.organization.create({
+        data: {
+          name: args.organizationName.trim(),
+          ownerId: newUser.id,
+          description: `${args.organizationName.trim()} organization`
+        }
+      });
+
+      // Add user as OWNER to the organization
+      await prisma.userRole.create({
+        data: {
+          userId: newUser.id,
+          organizationId: organization.id,
+          role: 'OWNER'
+        }
+      });
+    }
 
     return { user: newUser, created: true };
   }
@@ -140,9 +208,11 @@ export class IdentityService {
       
       reused = true;
     } else {
-      // Generate new selector and token
+      // Generate new selector and 6-digit numeric token
       selector = crypto.randomBytes(12).toString('hex');
-      token = crypto.randomBytes(16).toString('hex');
+      // Generate 6-digit numeric code (100000-999999)
+      const numericCode = Math.floor(Math.random() * 900000) + 100000;
+      token = numericCode.toString();
       const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
       const expiresAt = new Date(Date.now() + env.signupCodeTtlSec * 1000);
@@ -365,9 +435,11 @@ export class IdentityService {
       
       reused = true;
     } else {
-      // Generate new selector and token
+      // Generate new selector and 6-digit numeric token
       selector = crypto.randomBytes(12).toString('hex');
-      token = crypto.randomBytes(16).toString('hex');
+      // Generate 6-digit numeric code (100000-999999)
+      const numericCode = Math.floor(Math.random() * 900000) + 100000;
+      token = numericCode.toString();
       const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
       const expiresAt = new Date(Date.now() + env.resetCodeTtlSec * 1000);
@@ -569,6 +641,12 @@ export class IdentityService {
     const isValidCurrent = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!isValidCurrent) {
       throw new Error('invalid_current_password');
+    }
+
+    // Validate new password strength
+    const passwordValidation = this.validatePassword(newPassword);
+    if (!passwordValidation.valid) {
+      throw new Error(passwordValidation.error);
     }
 
     // Hash new password
