@@ -13,7 +13,6 @@ interface CreateUserArgs {
   password: string;
   name?: string;
   phone?: string;
-  address?: string;
   organizationName?: string;
 }
 
@@ -21,7 +20,6 @@ interface UpdateProfileArgs {
   email?: string;
   name?: string;
   phone?: string;
-  address?: string;
 }
 
 export class IdentityService {
@@ -94,7 +92,6 @@ export class IdentityService {
           passwordHash,
           name: args.name,
           phone: args.phone,
-          address: args.address,
         }
       });
       return { user: updatedUser, created: false };
@@ -107,13 +104,12 @@ export class IdentityService {
         passwordHash,
         name: args.name,
         phone: args.phone,
-        address: args.address,
       }
     });
 
     // Create organization if provided
     if (args.organizationName && args.organizationName.trim()) {
-      const organization = await prisma.organization.create({
+      await prisma.organization.create({
         data: {
           name: args.organizationName.trim(),
           ownerId: newUser.id,
@@ -121,14 +117,8 @@ export class IdentityService {
         }
       });
 
-      // Add user as OWNER to the organization
-      await prisma.userRole.create({
-        data: {
-          userId: newUser.id,
-          organizationId: organization.id,
-          role: 'OWNER'
-        }
-      });
+      // UserRole管理已移到employee-service
+      // 组织ownership通过organization.ownerId字段管理
     }
 
     return { user: newUser, created: true };
@@ -592,8 +582,8 @@ export class IdentityService {
     const updates: any = {};
 
     // Handle regular fields
+    if (patch.name !== undefined) updates.name = patch.name;
     if (patch.phone !== undefined) updates.phone = patch.phone;
-    if (patch.address !== undefined) updates.address = patch.address;
 
     // Note: subdomain functionality removed in simplified architecture
 

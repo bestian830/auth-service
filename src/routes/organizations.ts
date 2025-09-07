@@ -9,21 +9,22 @@ const router = Router();
 // All organization endpoints require authentication
 router.use(requireBearer);
 
-// Create organization schema
+// Create organization schema - 支持新的字段
 const createOrgSchema = z.object({
   name: z.string().min(1).max(100),
-  description: z.string().optional()
+  description: z.string().optional(),
+  location: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().email().optional()
 });
 
-// Add user to organization schema  
-const addUserSchema = z.object({
-  userId: z.string().uuid(),
-  role: z.enum(['OWNER', 'MANAGER', 'EMPLOYEE'])
-});
-
-// Update user role schema
-const updateRoleSchema = z.object({
-  role: z.enum(['MANAGER', 'EMPLOYEE']) // Can't update to/from OWNER
+// Update organization schema
+const updateOrgSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().optional(),
+  location: z.string().optional(), 
+  phone: z.string().optional(),
+  email: z.string().email().optional()
 });
 
 /**
@@ -42,7 +43,10 @@ router.post('/', async (req: Request, res: Response) => {
     const organization = await organizationService.createOrganization({
       name: body.name,
       ownerId: userId,
-      description: body.description
+      description: body.description,
+      location: body.location,
+      phone: body.phone,
+      email: body.email
     });
 
     res.status(201).json({ organization });
@@ -83,6 +87,33 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 /**
+ * PUT /organizations/:id
+ * Update organization details
+ */
+router.put('/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const body = updateOrgSchema.parse(req.body);
+    const userId = (req as any).claims?.sub;
+
+    // Check if user has access to this organization
+    const permission = await organizationService.checkUserPermission(userId, id);
+    if (!permission.hasAccess) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const organization = await organizationService.updateOrganization(id, body);
+    res.json({ organization });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid request', details: error.errors });
+    }
+    console.error('Failed to update organization:', error);
+    res.status(500).json({ error: 'Failed to update organization' });
+  }
+});
+
+/**
  * GET /organizations
  * Get user's organizations
  */
@@ -98,94 +129,62 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /organizations/:id/users
- * Add user to organization
+ * DELETE /organizations/:id
+ * Delete organization (soft delete)
  */
-router.post('/:id/users', async (req: Request, res: Response) => {
+router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const body = addUserSchema.parse(req.body);
-    const adminUserId = (req as any).claims?.sub;
+    const userId = (req as any).claims?.sub;
 
-    // Check if requesting user is owner or manager
-    const permission = await organizationService.checkUserPermission(adminUserId, id, 'MANAGER');
+    // Check if user has access to this organization  
+    const permission = await organizationService.checkUserPermission(userId, id);
     if (!permission.hasAccess) {
-      return res.status(403).json({ error: 'Manager access required' });
+      return res.status(403).json({ error: 'Access denied' });
     }
 
-    const userRole = await organizationService.addUserToOrganization({
-      userId: body.userId,
-      organizationId: id,
-      role: body.role
-    });
-
-    res.status(201).json({ userRole });
+    await organizationService.deleteOrganization(id);
+    res.json({ success: true, message: 'Organization deleted successfully' });
   } catch (error: any) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Invalid request', details: error.errors });
-    }
-    if (error.message === 'User already has a role in this organization') {
-      return res.status(409).json({ error: 'User already in organization' });
-    }
-    console.error('Failed to add user to organization:', error);
-    res.status(500).json({ error: 'Failed to add user to organization' });
+    console.error('Failed to delete organization:', error);
+    res.status(500).json({ error: 'Failed to delete organization' });
   }
 });
 
+// ===== 以下API已移到employee-service =====
+
 /**
- * PUT /organizations/:id/users/:userId/role
- * Update user role in organization
+ * @deprecated 用户角色管理API已移到employee-service
+ * 请使用employee-service的对应API端点
+ */
+router.post('/:id/users', async (req: Request, res: Response) => {
+  res.status(410).json({ 
+    error: 'API moved', 
+    message: 'User role management has been moved to employee-service. Please use employee-service API instead.',
+    newEndpoint: 'POST /employee-service/organizations/:id/employees'
+  });
+});
+
+/**
+ * @deprecated 用户角色管理API已移到employee-service
  */
 router.put('/:id/users/:userId/role', async (req: Request, res: Response) => {
-  try {
-    const { id, userId } = req.params;
-    const body = updateRoleSchema.parse(req.body);
-    const adminUserId = (req as any).claims?.sub;
-
-    // Check if requesting user is owner or manager
-    const permission = await organizationService.checkUserPermission(adminUserId, id, 'MANAGER');
-    if (!permission.hasAccess) {
-      return res.status(403).json({ error: 'Manager access required' });
-    }
-
-    await organizationService.updateUserRole(userId, id, body.role);
-    res.json({ success: true });
-  } catch (error: any) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Invalid request', details: error.errors });
-    }
-    if (error.message === 'Cannot modify owner role') {
-      return res.status(403).json({ error: 'Cannot modify owner role' });
-    }
-    console.error('Failed to update user role:', error);
-    res.status(500).json({ error: 'Failed to update user role' });
-  }
+  res.status(410).json({ 
+    error: 'API moved',
+    message: 'User role management has been moved to employee-service. Please use employee-service API instead.',
+    newEndpoint: 'PUT /employee-service/organizations/:id/employees/:userId/role'
+  });
 });
 
 /**
- * DELETE /organizations/:id/users/:userId
- * Remove user from organization
+ * @deprecated 用户角色管理API已移到employee-service
  */
 router.delete('/:id/users/:userId', async (req: Request, res: Response) => {
-  try {
-    const { id, userId } = req.params;
-    const adminUserId = (req as any).claims?.sub;
-
-    // Check if requesting user is owner or manager
-    const permission = await organizationService.checkUserPermission(adminUserId, id, 'MANAGER');
-    if (!permission.hasAccess) {
-      return res.status(403).json({ error: 'Manager access required' });
-    }
-
-    await organizationService.removeUserFromOrganization(userId, id);
-    res.json({ success: true });
-  } catch (error: any) {
-    if (error.message === 'Cannot remove organization owner') {
-      return res.status(403).json({ error: 'Cannot remove organization owner' });
-    }
-    console.error('Failed to remove user from organization:', error);
-    res.status(500).json({ error: 'Failed to remove user from organization' });
-  }
+  res.status(410).json({ 
+    error: 'API moved',
+    message: 'User role management has been moved to employee-service. Please use employee-service API instead.',
+    newEndpoint: 'DELETE /employee-service/organizations/:id/employees/:userId'
+  });
 });
 
 export default router;

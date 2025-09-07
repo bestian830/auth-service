@@ -8,7 +8,7 @@ import { audit } from '../middleware/audit.js';
 import { importJWK, jwtVerify } from 'jose';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
-import { deviceService } from '../services/device.js';
+// import { deviceService } from '../services/device.js'; // Device服务已移到其他微服务
 import { jtiCache } from '../infra/redis.js';
 import { authenticateClient, validateGrantType } from '../services/clientAuth.js';
 
@@ -242,9 +242,9 @@ export async function token(req: Request, res: Response){
       const user = await prisma.user.findUnique({
         where: { id: c.subjectUserId! },
         include: {
-          userRoles: {
+          ownedOrganizations: {
             where: { status: 'ACTIVE' },
-            include: { organization: true }
+            orderBy: { createdAt: 'asc' }
           }
         }
       });
@@ -254,8 +254,8 @@ export async function token(req: Request, res: Response){
       }
       
       // Get first active organization (simplified approach)
-      const activeRole = user.userRoles.find(ur => ur.organization.status === 'ACTIVE');
-      const organizationId = activeRole?.organizationId || undefined;
+      const primaryOrg = user.ownedOrganizations[0];
+      const organizationId = primaryOrg?.id || undefined;
       
       const scopes = (c.scope || '').split(/\s+/).filter(Boolean);
       
@@ -269,7 +269,7 @@ export async function token(req: Request, res: Response){
       // AT 面向 API
       const at = await signAccessToken({
         sub: c.subjectUserId!, 
-        roles: activeRole ? [activeRole.role] : [], 
+        roles: primaryOrg ? ['OWNER'] : [], 
         scopes, 
         organizationId
       });
@@ -302,51 +302,11 @@ export async function token(req: Request, res: Response){
         
         let deviceId: string | null = null;
 
+        // 设备验证功能已移到其他微服务，暂时禁用
         // Optional device proof validation
-        if (device_proof) {
-          try {
-            // Extract device_id from device_proof JWT
-            const [, payloadB64] = device_proof.split('.');
-            const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
-            deviceId = payload.iss || payload.sub;
-
-            if (!deviceId) {
-              throw new Error('No device ID in proof');
-            }
-
-            // Verify device proof
-            const proofPayload = await deviceService.verifyDeviceProof(deviceId, device_proof);
-            
-            // Check JTI for replay protection
-            const jtiExists = await jtiCache.exists(proofPayload.jti);
-            if (jtiExists) {
-              audit('token_refresh_failed', { 
-                refreshTokenId: refresh_token,
-                deviceId,
-                jti: proofPayload.jti,
-                reason: 'jti_replay' 
-              });
-              return res.status(400).json({ error: 'device_proof_replay' });
-            }
-            
-            // Cache JTI to prevent replay
-            await jtiCache.set(proofPayload.jti, '1', env.jtiCacheTtlSec);
-            
-            audit('device_proof_verified', {
-              deviceId,
-              jti: proofPayload.jti
-            });
-            
-          } catch (error: any) {
-            audit('device_proof_failed', {
-              refreshTokenId: refresh_token,
-              deviceId,
-              reason: 'invalid_device_proof',
-              error: error.message
-            });
-            // Continue without failing - device proof is optional
-          }
-        }
+        // if (device_proof) {
+        //   deviceId validation logic...
+        // }
         
         // Get user and organization info
         let organizationId: string | undefined = undefined;
@@ -356,19 +316,18 @@ export async function token(req: Request, res: Response){
           const user = await prisma.user.findUnique({ 
             where: { id: rotated.subject.userId },
             include: {
-              userRoles: {
+              ownedOrganizations: {
                 where: { status: 'ACTIVE' },
-                include: { organization: true }
+                orderBy: { createdAt: 'asc' }
               }
             }
           });
           
-          if (user) {
-            const activeRole = user.userRoles.find(ur => ur.organization.status === 'ACTIVE');
-            if (activeRole) {
-              organizationId = activeRole.organizationId;
-              roles = [activeRole.role];
-            }
+          if (user && user.ownedOrganizations.length > 0) {
+            // Use primary organization (first created)
+            const primaryOrg = user.ownedOrganizations[0];
+            organizationId = primaryOrg.id;
+            roles = ['OWNER']; // User is owner of their organizations
           }
         }
         

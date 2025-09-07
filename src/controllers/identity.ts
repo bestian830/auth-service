@@ -13,15 +13,19 @@ import type { RefreshFamilyRow } from '../types/prisma.js';
 const identityService = new IdentityService();
 
 export async function register(req: Request, res: Response) {
-  const { email, password, name, phone, address, organizationName } = req.body;
+  const { email, password, name, phone, organizationName } = req.body;
 
   // Always return success to prevent enumeration attacks
   const sendSuccessResponse = () => res.json({ ok: true });
 
   try {
-    if (!email || !password) {
+    // 老板注册时必须提供组织信息
+    if (!email || !password || !organizationName) {
       audit('register_invalid_request', { ip: req.ip, email: email || 'missing' });
-      return res.status(400).json({ error: 'missing_required_fields' });
+      return res.status(400).json({ 
+        error: 'missing_required_fields',
+        message: 'Email, password, and organization name are required for boss registration'
+      });
     }
 
     // Validate email format
@@ -64,7 +68,6 @@ export async function register(req: Request, res: Response) {
       password,
       name,
       phone,
-      address,
       organizationName
     });
 
@@ -416,33 +419,27 @@ export async function login(req: Request, res: Response) {
       }
     });
 
-    // Get user's organizations and roles for token claims
-    const userOrganizations = await prisma.userRole.findMany({
-      where: { userId: user.id },
+    // Get user's owned organizations for token claims
+    // UserRole管理已移到employee-service，这里只获取作为owner的组织
+    const ownedOrganizations = await prisma.organization.findMany({
+      where: { 
+        ownerId: user.id,
+        status: 'ACTIVE' 
+      },
       select: {
         id: true,
-        userId: true,
-        organizationId: true,
-        role: true,
-        status: true,
-        joinedAt: true,
-        organization: {
-          select: {
-            id: true,
-            name: true,
-            status: true
-          }
-        }
+        name: true,
+        status: true
       },
-      orderBy: { joinedAt: 'asc' } // Primary organization first (earliest joined)
+      orderBy: { createdAt: 'asc' } // Primary organization first (earliest created)
     });
 
-    // Use primary organization (first one joined)
-    const primaryOrganization = userOrganizations[0];
-    const organizationId = primaryOrganization?.organizationId || null;
+    // Use primary organization (first one created)
+    const primaryOrganization = ownedOrganizations[0];
+    const organizationId = primaryOrganization?.id || null;
     
-    // Collect all roles from all organizations
-    const roles = userOrganizations.length > 0 ? userOrganizations.map(ur => ur.role) : [];
+    // Boss账号默认具有OWNER角色
+    const roles = ownedOrganizations.length > 0 ? ['OWNER'] : [];
     const scopes = ['openid', 'profile', 'email']; // Standard OIDC scopes
 
     // Generate access token with user context
@@ -473,11 +470,11 @@ export async function login(req: Request, res: Response) {
       name: user.name,
       phone: user.phone,
       emailVerifiedAt: user.emailVerifiedAt,
-      organizations: userOrganizations.map(ur => ({
-        id: ur.organization.id,
-        name: ur.organization.name,
-        role: ur.role,
-        status: ur.organization.status
+      organizations: ownedOrganizations.map(org => ({
+        id: org.id,
+        name: org.name,
+        role: 'OWNER', // Boss账号默认为OWNER
+        status: org.status
       }))
     };
 
@@ -740,7 +737,6 @@ export async function getProfile(req: Request, res: Response) {
         email: true,
         name: true,
         phone: true,
-        address: true,
         emailVerifiedAt: true,
         createdAt: true
       }
@@ -769,19 +765,18 @@ export async function updateProfile(req: Request, res: Response) {
       return res.status(401).json({ error: 'unauthorized' });
     }
 
-    const { email, name, phone, address } = req.body;
+    const { email, name, phone } = req.body;
     
     const updatedUser = await identityService.updateUserProfile(userId, {
       email,
       name,
-      phone,
-      address
+      phone
     });
 
     audit('profile_updated', { 
       ip: req.ip, 
       userId,
-      changes: { email, name, phone: !!phone, address: !!address }
+      changes: { email, name, phone: !!phone }
     });
 
     // Return updated profile (excluding sensitive fields)
@@ -792,7 +787,6 @@ export async function updateProfile(req: Request, res: Response) {
         email: true,
         name: true,
         phone: true,
-        address: true,
         emailVerifiedAt: true,
         createdAt: true
       }

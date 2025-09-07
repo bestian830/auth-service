@@ -1,23 +1,21 @@
 // src/services/organization.ts
 import { prisma } from '../infra/prisma.js';
-import { OrganizationStatus, Role, UserRoleStatus } from '@prisma/client';
+import { OrganizationStatus } from '@prisma/client';
 import { audit } from '../middleware/audit.js';
 
 export interface CreateOrganizationRequest {
   name: string;
   ownerId: string;
   description?: string;
-}
-
-export interface AddUserToOrganizationRequest {
-  userId: string;
-  organizationId: string;
-  role: Role;
+  location?: string;
+  phone?: string;
+  email?: string;
 }
 
 export class OrganizationService {
   /**
    * 创建新组织
+   * Auth-service只负责基础组织管理，不涉及用户角色
    */
   async createOrganization(request: CreateOrganizationRequest) {
     const organization = await prisma.organization.create({
@@ -25,6 +23,9 @@ export class OrganizationService {
         name: request.name,
         ownerId: request.ownerId,
         description: request.description,
+        location: request.location,
+        phone: request.phone,
+        email: request.email,
         status: OrganizationStatus.ACTIVE,
       },
       include: {
@@ -35,16 +36,6 @@ export class OrganizationService {
             name: true,
           }
         }
-      }
-    });
-
-    // 自动给创建者添加OWNER角色
-    await prisma.userRole.create({
-      data: {
-        userId: request.ownerId,
-        organizationId: organization.id,
-        role: Role.OWNER,
-        status: UserRoleStatus.ACTIVE,
       }
     });
 
@@ -59,6 +50,7 @@ export class OrganizationService {
 
   /**
    * 获取组织信息
+   * 简化版本，不包含用户角色和设备信息（这些由其他微服务管理）
    */
   async getOrganization(organizationId: string) {
     return await prisma.organization.findUnique({
@@ -70,268 +62,83 @@ export class OrganizationService {
             email: true,
             name: true,
           }
-        },
-        userRoles: {
-          where: {
-            status: UserRoleStatus.ACTIVE
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                email: true,
-                name: true,
-              }
-            }
-          }
-        },
-        devices: {
-          where: {
-            status: 'ACTIVE'
-          }
         }
       }
     });
   }
 
   /**
-   * 获取用户的组织列表
+   * 获取用户拥有的组织列表
+   * 只返回用户作为owner的组织
    */
   async getUserOrganizations(userId: string) {
-    const userRoles = await prisma.userRole.findMany({
+    const organizations = await prisma.organization.findMany({
       where: {
-        userId,
-        status: UserRoleStatus.ACTIVE,
-      },
-      include: {
-        organization: true
+        ownerId: userId,
+        status: OrganizationStatus.ACTIVE,
       }
     });
 
-    return userRoles.filter(ur => ur.organization && ur.organization.status === OrganizationStatus.ACTIVE).map(ur => ({
-      organizationId: ur.organizationId,
-      organization: ur.organization,
-      role: ur.role,
-      joinedAt: ur.joinedAt,
-    }));
+    return organizations;
   }
 
   /**
-   * 添加用户到组织
+   * 检查用户对组织的基础访问权限
+   * 简化版本：只检查是否为组织owner
+   * 详细的角色权限检查由employee-service处理
    */
-  async addUserToOrganization(request: AddUserToOrganizationRequest) {
-    // 检查组织是否存在且激活
+  async checkUserPermission(userId: string, organizationId: string, requiredRole?: string) {
+    // 检查组织是否存在且活跃
     const organization = await prisma.organization.findUnique({
       where: { 
-        id: request.organizationId,
+        id: organizationId,
         status: OrganizationStatus.ACTIVE 
       }
     });
 
     if (!organization) {
-      throw new Error('Organization not found or inactive');
-    }
-
-    // 检查用户是否存在
-    const user = await prisma.user.findUnique({
-      where: { id: request.userId }
-    });
-
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    // 检查是否已经存在角色关系
-    const existingRole = await prisma.userRole.findUnique({
-      where: {
-        userId_organizationId: {
-          userId: request.userId,
-          organizationId: request.organizationId,
-        }
-      }
-    });
-
-    if (existingRole && existingRole.status === UserRoleStatus.ACTIVE) {
-      throw new Error('User already has a role in this organization');
-    }
-
-    // 创建或更新用户角色
-    const userRole = await prisma.userRole.upsert({
-      where: {
-        userId_organizationId: {
-          userId: request.userId,
-          organizationId: request.organizationId,
-        }
-      },
-      update: {
-        role: request.role,
-        status: UserRoleStatus.ACTIVE,
-        leftAt: null,
-      },
-      create: {
-        userId: request.userId,
-        organizationId: request.organizationId,
-        role: request.role,
-        status: UserRoleStatus.ACTIVE,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-          }
-        },
-        organization: {
-          select: {
-            id: true,
-            name: true,
-          }
-        }
-      }
-    });
-
-    audit('user_added_to_organization', {
-      userId: request.userId,
-      organizationId: request.organizationId,
-      role: request.role,
-    });
-
-    return userRole;
-  }
-
-  /**
-   * 移除用户的组织角色
-   */
-  async removeUserFromOrganization(userId: string, organizationId: string) {
-    const userRole = await prisma.userRole.findUnique({
-      where: {
-        userId_organizationId: {
-          userId,
-          organizationId,
-        }
-      }
-    });
-
-    if (!userRole) {
-      throw new Error('User role not found');
-    }
-
-    // 不能移除组织的拥有者
-    if (userRole.role === Role.OWNER) {
-      throw new Error('Cannot remove organization owner');
-    }
-
-    await prisma.userRole.update({
-      where: {
-        userId_organizationId: {
-          userId,
-          organizationId,
-        }
-      },
-      data: {
-        status: UserRoleStatus.LEFT,
-        leftAt: new Date(),
-      }
-    });
-
-    audit('user_removed_from_organization', {
-      userId,
-      organizationId,
-      role: userRole.role,
-    });
-  }
-
-  /**
-   * 更新用户在组织中的角色
-   */
-  async updateUserRole(userId: string, organizationId: string, newRole: Role) {
-    const userRole = await prisma.userRole.findUnique({
-      where: {
-        userId_organizationId: {
-          userId,
-          organizationId,
-        }
-      }
-    });
-
-    if (!userRole || userRole.status !== UserRoleStatus.ACTIVE) {
-      throw new Error('User role not found or inactive');
-    }
-
-    // 不能修改拥有者角色
-    if (userRole.role === Role.OWNER || newRole === Role.OWNER) {
-      throw new Error('Cannot modify owner role');
-    }
-
-    await prisma.userRole.update({
-      where: {
-        userId_organizationId: {
-          userId,
-          organizationId,
-        }
-      },
-      data: {
-        role: newRole,
-      }
-    });
-
-    audit('user_role_updated', {
-      userId,
-      organizationId,
-      oldRole: userRole.role,
-      newRole,
-    });
-  }
-
-  /**
-   * 检查用户在组织中的权限
-   */
-  async checkUserPermission(userId: string, organizationId: string, requiredRole?: Role) {
-    const userRole = await prisma.userRole.findUnique({
-      where: {
-        userId_organizationId: {
-          userId,
-          organizationId,
-        }
-      },
-      include: {
-        organization: {
-          select: {
-            status: true
-          }
-        }
-      }
-    });
-
-    if (!userRole || 
-        userRole.status !== UserRoleStatus.ACTIVE ||
-        userRole.organization?.status !== OrganizationStatus.ACTIVE) {
       return { hasAccess: false, role: null };
     }
 
-    // 如果指定了必需角色，检查权限等级
-    if (requiredRole) {
-      const roleHierarchy = {
-        [Role.EMPLOYEE]: 0,
-        [Role.MANAGER]: 1,
-        [Role.OWNER]: 2,
-      };
-
-      const userLevel = roleHierarchy[userRole.role];
-      const requiredLevel = roleHierarchy[requiredRole];
-
-      return { 
-        hasAccess: userLevel >= requiredLevel, 
-        role: userRole.role 
-      };
+    // 检查是否为组织所有者
+    const isOwner = organization.ownerId === userId;
+    
+    if (!isOwner) {
+      return { hasAccess: false, role: null };
     }
 
-    return { hasAccess: true, role: userRole.role };
+    // 如果是owner，具有所有权限
+    return { 
+      hasAccess: true, 
+      role: 'OWNER' 
+    };
   }
 
   /**
-   * 停用组织
+   * 更新组织信息
+   */
+  async updateOrganization(organizationId: string, updates: {
+    name?: string;
+    description?: string;
+    location?: string;
+    phone?: string;
+    email?: string;
+  }) {
+    const organization = await prisma.organization.update({
+      where: { id: organizationId },
+      data: updates,
+    });
+
+    audit('organization_updated', {
+      organizationId,
+      updates,
+    });
+
+    return organization;
+  }
+
+  /**
+   * 暂停组织
    */
   async suspendOrganization(organizationId: string, reason?: string) {
     await prisma.organization.update({
@@ -361,6 +168,48 @@ export class OrganizationService {
     audit('organization_activated', {
       organizationId,
     });
+  }
+
+  /**
+   * 删除组织（软删除）
+   */
+  async deleteOrganization(organizationId: string) {
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        status: OrganizationStatus.DELETED,
+      }
+    });
+
+    audit('organization_deleted', {
+      organizationId,
+    });
+  }
+
+  // ===== 以下功能已移到employee-service =====
+  
+  /**
+   * @deprecated 用户角色管理已移到employee-service
+   * 请调用employee-service的API来管理用户角色
+   */
+  async addUserToOrganization() {
+    throw new Error('User role management has been moved to employee-service. Please use employee-service API.');
+  }
+
+  /**
+   * @deprecated 用户角色管理已移到employee-service  
+   * 请调用employee-service的API来管理用户角色
+   */
+  async removeUserFromOrganization() {
+    throw new Error('User role management has been moved to employee-service. Please use employee-service API.');
+  }
+
+  /**
+   * @deprecated 用户角色管理已移到employee-service
+   * 请调用employee-service的API来管理用户角色
+   */
+  async updateUserRole() {
+    throw new Error('User role management has been moved to employee-service. Please use employee-service API.');
   }
 }
 

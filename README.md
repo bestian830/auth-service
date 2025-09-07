@@ -5,30 +5,226 @@
 ## 📖 目录
 
 - [系统概述](#系统概述)
-- [在Tymoe生态中的位置](#在tymoe生态中的位置)
-- [核心功能](#核心功能)
-- [架构设计](#架构设计)
-- [Token管理](#token管理)
-- [环境配置](#环境配置)
-- [快速开始](#快速开始)
-- [API接口](#api接口)
-- [前后端协作](#前后端协作)
-- [开发指南](#开发指南)
+- [数据库架构](#数据库架构)
+- [API接口详解](#api接口详解)
+- [配置参数详解](#配置参数详解)
+- [reCAPTCHA配置](#recaptcha配置)
+- [邮件系统配置](#邮件系统配置)
+- [与后端服务集成](#与后端服务集成)
+- [在Tymoe生态中的定位](#在tymoe生态中的定位)
 - [部署运维](#部署运维)
+- [开发指南](#开发指南)
+- [故障排除](#故障排除)
 
 ## 系统概述
 
-Auth Service是Tymoe微服务生态系统的**身份认证中心**，专注于提供安全、可靠的用户身份管理和访问控制服务。本服务基于OAuth2/OpenID Connect标准协议，为整个Tymoe产品矩阵提供统一的身份验证解决方案。
+Tymoe Auth Service 是一个基于 OAuth2/OIDC 标准的认证服务，专为 Tymoe 餐厅管理系统设计。它提供完整的身份认证、授权管理和用户管理功能，支持多组织架构，并具备企业级的安全特性。
 
-### 设计理念
+### 核心功能
 
-- **简化架构**：专注身份认证，不处理业务逻辑
-- **API优先**：纯API接口，前端完全控制UI
-- **安全至上**：多层安全防护，支持CAPTCHA、速率限制、账户锁定
-- **组织导向**：基于组织的权限管理模型
-- **可扩展性**：支持设备认证、多租户隔离
+- **身份认证**: 用户注册、登录、密码管理
+- **OAuth2/OIDC**: 标准协议支持，为其他服务提供统一认证
+- **多组织支持**: 支持一个用户管理多个餐厅
+- **安全防护**: 速率限制、账号锁定、验证码防护
+- **邮件通知**: 邮箱验证、密码重置等通知
+- **审计日志**: 完整的操作审计记录
 
-## 在Tymoe生态中的位置
+### 技术栈
+- **后端**: Node.js + TypeScript + Express
+- **数据库**: PostgreSQL + Prisma ORM
+- **缓存**: Redis (速率限制、会话管理)
+- **认证**: JWT + OAuth2/OIDC
+- **邮件**: NodeMailer (支持 SMTP/Console)
+- **监控**: Prometheus metrics
+- **安全**: Helmet, CORS, CSRF, Rate Limiting
+
+## 数据库架构
+
+### 用户管理模型
+
+```sql
+-- 用户表：存储基本用户信息
+User {
+  id                    String   @id @default(uuid())
+  email                 String   @unique
+  passwordHash          String
+  name                  String?
+  phone                 String?
+  emailVerifiedAt       DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  -- 安全控制
+  loginFailureCount     Int      @default(0)
+  lastLoginFailureAt    DateTime?
+  lockedUntil          DateTime?
+  lockReason           String?
+  
+  -- 关联关系
+  ownedOrganizations   Organization[] @relation("OrganizationOwner")
+  emailVerifications   EmailVerification[]
+  passwordResets       PasswordReset[]
+  loginAttempts        LoginAttempt[]
+}
+
+-- 组织表：餐厅/店铺信息
+Organization {
+  id           String   @id @default(uuid())
+  name         String
+  ownerId      String
+  description  String?
+  location     String?   -- 店铺地址
+  phone        String?   -- 店铺电话
+  email        String?   -- 店铺邮箱
+  status       OrganizationStatus @default(ACTIVE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  owner        User @relation("OrganizationOwner")
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+```
+
+### OAuth2/OIDC 模型
+
+```sql
+-- OAuth2 客户端
+Client {
+  id           String   @id @default(cuid())
+  clientId     String   @unique
+  name         String?
+  type         ClientType @default(PUBLIC)
+  secretHash   String?
+  authMethod   TokenEndpointAuthMethod @default(none)
+  redirectUris String[]
+}
+
+-- 授权码
+AuthorizationCode {
+  id                  String   @id @default(uuid())
+  clientId            String
+  redirectUri         String
+  codeChallenge       String
+  codeChallengeMethod String   @default("S256")
+  scope               String?
+  state               String?
+  
+  -- 主体信息
+  subjectUserId       String?
+  subjectDeviceId     String?
+  organizationId      String?  -- 上下文组织
+  
+  -- 生命周期
+  createdAt           DateTime @default(now())
+  expiresAt           DateTime
+  used                Boolean  @default(false)
+}
+
+-- 刷新令牌
+RefreshToken {
+  id               String   @id
+  familyId         String
+  subjectUserId    String?
+  subjectDeviceId  String?
+  clientId         String
+  organizationId   String?  -- 令牌关联的组织
+  status           RefreshTokenStatus @default(ACTIVE)
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime
+}
+```
+
+### 身份验证模型
+
+```sql
+-- 邮箱验证
+EmailVerification {
+  id          String   @id @default(uuid())
+  userId      String
+  selector    String   @unique
+  tokenHash   String
+  purpose     String   -- "signup" | "email_change"
+  sentTo      String
+  expiresAt   DateTime
+  attempts    Int      @default(0)
+  
+  -- 重发控制
+  reuseWindowExpiresAt DateTime?
+  lastSentAt           DateTime @default(now())
+  resendCount          Int      @default(0)
+}
+
+-- 密码重置
+PasswordReset {
+  id          String   @id @default(uuid())
+  userId      String
+  selector    String   @unique
+  tokenHash   String
+  sentTo      String
+  expiresAt   DateTime
+  attempts    Int      @default(0)
+  
+  -- 重发控制
+  reuseWindowExpiresAt DateTime?
+  lastSentAt           DateTime @default(now())
+  resendCount          Int      @default(0)
+}
+
+-- 登录记录
+LoginAttempt {
+  id             String   @id @default(uuid())
+  userId         String?
+  email          String
+  organizationId String?  -- 登录上下文组织
+  ipAddress      String
+  userAgent      String?
+  success        Boolean
+  failureReason  String?
+  captchaUsed    Boolean  @default(false)
+  attemptAt      DateTime @default(now())
+}
+```
+
+### 密钥管理和审计
+
+```sql
+-- JWT 签名密钥管理
+Key {
+  kid          String   @id
+  type         String   -- 'RSA'
+  status       KeyStatus
+  privatePem   String   -- 加密存储的私钥
+  publicJwk    Json
+  createdAt    DateTime @default(now())
+  activatedAt  DateTime?
+  retiredAt    DateTime?
+}
+
+enum KeyStatus {
+  ACTIVE
+  GRACE
+  RETIRED
+}
+
+-- 审计日志
+AuditLog {
+  id          String   @id @default(uuid())
+  at          DateTime @default(now())
+  ip          String?
+  userAgent   String?
+  actorUserId String?
+  action      String
+  subject     String?
+  detail      Json?
+}
+```
+
+## API接口详解
 
 ### 🏗️ 服务架构图
 
@@ -60,15 +256,240 @@ Auth Service是Tymoe微服务生态系统的**身份认证中心**，专注于�
 
 #### 1. **与业务服务的通信协议**
 
-**标准Bearer Token认证：**SMTP_HOST=mail.eazy.solutions
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=noreply@tymoe.com
-SMTP_PASS=&,48,RoneAD
-MAIL_FROM=Tymoe Technologies <noreply@tymoe.com>
+### 1. Identity 身份管理 (`/identity`)
+
+#### 用户注册
 ```http
+POST /identity/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "name": "张三",
+  "phone": "+8613812345678",
+  "captcha": "recaptcha_response"
+}
+```
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "message": "Registration successful. Please check your email for verification.",
+  "userId": "user-uuid"
+}
+```
+
+#### 邮箱验证
+```http
+POST /identity/verify
+{
+  "selector": "verification_selector",
+  "token": "123456"
+}
+```
+
+#### 用户登录
+```http
+POST /identity/login
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "captcha": "recaptcha_response" // 条件性必需
+}
+```
+
+**登录成功响应:**
+```json
+{
+  "success": true,
+  "user": {
+    "id": "user-uuid",
+    "email": "user@example.com",
+    "name": "张三",
+    "emailVerified": true
+  },
+  "organizations": [
+    {
+      "id": "org-uuid",
+      "name": "我的餐厅",
+      "role": "OWNER"
+    }
+  ]
+}
+```
+
+#### 获取验证码状态
+```http
+GET /identity/captcha-status?email=user@example.com
+```
+
+**响应:**
+```json
+{
+  "captcha_required": true,
+  "captcha_site_key": "6LcXXXXXXXXXXXXX",
+  "threshold": 3
+}
+```
+
+#### 密码重置流程
+```http
+# 1. 请求重置
+POST /identity/forgot-password
+{
+  "email": "user@example.com"
+}
+
+# 2. 确认重置
+POST /identity/reset-password
+{
+  "selector": "reset_selector",
+  "token": "123456",
+  "newPassword": "newpassword123"
+}
+```
+
+#### 用户资料管理
+```http
+# 获取用户资料
+GET /identity/profile
+Authorization: Bearer <access_token>
+
+# 更新用户资料
+PUT /identity/profile
+Authorization: Bearer <access_token>
+{
+  "name": "新姓名",
+  "phone": "+8613987654321"
+}
+
+# 修改密码
+POST /identity/change-password
+Authorization: Bearer <access_token>
+{
+  "currentPassword": "oldpassword",
+  "newPassword": "newpassword123"
+}
+```
+
+### 2. OAuth2/OIDC 端点
+
+#### Discovery 端点
+```http
+GET /.well-known/openid-configuration
+```
+
+#### 获取公钥
+```http
+GET /jwks.json
+```
+
+#### Token 端点
+```http
+POST /oauth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&
+code=<authorization_code>&
+redirect_uri=<redirect_uri>&
+client_id=<client_id>&
+code_verifier=<pkce_verifier>
+```
+
+**Token 响应:**
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIs...",
+  "refresh_token": "def502004a8b7e2c...",
+  "id_token": "eyJhbGciOiJSUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 1800
+}
+```
+
+#### 令牌撤销
+```http
+POST /oauth/revoke
+{
+  "token": "<refresh_token>",
+  "token_type_hint": "refresh_token"
+}
+```
+
+#### 令牌内省
+```http
+POST /oauth/introspect
+Authorization: Basic <client_credentials>
+{
+  "token": "<access_token>"
+}
+```
+
+**内省响应:**
+```json
+{
+  "active": true,
+  "sub": "user-uuid",
+  "client_id": "client-id",
+  "aud": ["tymoe-service-order", "tymoe-service-menu"],
+  "org": "organization_id",
+  "scope": "read write",
+  "exp": 1234567890
+}
+```
+
+#### 用户信息
+```http
+GET /userinfo
 Authorization: Bearer <access_token>
 ```
+
+### 3. 组织管理 (`/organizations`)
+
+#### 创建组织
+```http
+POST /organizations
+Authorization: Bearer <access_token>
+{
+  "name": "我的餐厅",
+  "description": "中式快餐",
+  "location": "北京市朝阳区xxx街道",
+  "phone": "+861012345678",
+  "email": "restaurant@example.com"
+}
+```
+
+#### 获取组织列表
+```http
+GET /organizations
+Authorization: Bearer <access_token>
+```
+
+#### 更新组织信息
+```http
+PUT /organizations/{id}
+Authorization: Bearer <access_token>
+{
+  "name": "更新的餐厅名",
+  "location": "新地址"
+}
+```
+
+### 4. 管理端点 (`/admin`)
+
+```http
+# JWT密钥轮换
+POST /admin/rotate-keys
+Authorization: Bearer <admin_token>
+
+# 密钥回收
+POST /admin/retire-keys
+Authorization: Bearer <admin_token>
+```
+
+## 配置参数详解
 
 **Token验证端点：**
 ```http
@@ -1258,7 +1679,424 @@ export const ServiceConfig = {
 
 ## 部署运维
 
-### 🐳 Docker化部署
+### 项目结构说明
+
+```
+auth-service/
+├── src/
+│   ├── controllers/          # 控制器层 - 处理HTTP请求
+│   ├── services/            # 业务逻辑层 - 核心业务处理
+│   ├── middleware/          # 中间件层 - 认证、限流等
+│   ├── infra/               # 基础设施层 - 数据库、Redis等
+│   ├── routes/              # 路由定义
+│   ├── scripts/             # 运维脚本 (重要!必须保留)
+│   │   ├── rotate-key.ts    # JWT密钥轮换脚本
+│   │   └── retire-keys.ts   # 密钥清理脚本  
+│   ├── config/              # 配置管理
+│   ├── types/               # TypeScript类型定义
+│   ├── utils/               # 工具函数
+│   └── index.ts             # 应用入口
+├── prisma/
+│   └── schema.prisma        # 数据库模型定义
+├── e2e/                     # 端到端测试
+├── package.json             # 项目依赖和脚本
+├── tsconfig.json            # TypeScript配置
+├── Dockerfile               # Docker构建文件
+├── docker-compose.yml       # 本地开发环境
+├── .env                     # 环境配置 (不上传到Git)
+├── .gitignore               # Git忽略文件
+└── README.md                # 项目文档
+```
+
+### 重要文件说明
+
+#### 🔑 `src/scripts/` 目录 (重要!必须保留)
+- `rotate-key.ts`: JWT签名密钥轮换脚本，用于定期更新密钥以提高安全性
+- `retire-keys.ts`: 清理过期密钥脚本，用于移除不再使用的密钥
+- **这两个文件必须提交到GitHub，因为它们是生产环境运维必需的**
+
+#### 🚫 不应提交的文件
+- `.env` - 包含敏感信息（数据库密码、API密钥等）
+- `node_modules/` - 依赖包
+- `dist/` - 构建输出
+- `*.log` - 日志文件
+
+### .gitignore 配置
+
+确保你的 `.gitignore` 文件包含以下内容：
+
+```gitignore
+# 环境配置文件
+.env
+.env.local
+.env.production
+.env.backup
+*.env
+
+# 依赖包
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 构建输出
+dist/
+build/
+
+# 日志文件
+*.log
+logs/
+audit.log
+
+# 缓存文件
+.cache/
+.parcel-cache/
+
+# IDE设置
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+*.backup
+
+# Claude Code 本地设置
+.claude/
+```
+
+### 本地开发环境准备
+
+```bash
+# 安装依赖
+npm install
+
+# 生成 Prisma 客户端
+npm run prisma:generate
+
+# 运行数据库迁移
+npm run migrate
+
+# 初始化JWT签名密钥
+npm run rotate:key
+```
+
+## 云服务部署指南
+
+### 部署方案决策
+
+基于你的需求，推荐使用 **Oracle Cloud** 作为主要部署平台，理由如下：
+
+#### 🏆 为什么选择 Oracle Cloud
+- ✅ **Always Free Tier**：永久免费的资源（ARM Compute + 200GB 存储）
+- ✅ **性能优秀**：4 vCPU + 24GB 内存的 ARM 实例
+- ✅ **成本低**：适合初期项目和中小规模部署
+- ✅ **与 AWS 兼容**：后续如需扩展可轻松迁移到 AWS
+
+#### 🚀 推荐部署架构
+
+```
+┌──────────────────────────────────┐
+│        Oracle Cloud Infrastructure        │
+├──────────────────────────────────┤
+│ 🌐 Load Balancer (OCI LB)             │
+├──────────────────────────────────┤
+│ 📦 Docker Container (Auth Service)    │
+│   - Node.js + TypeScript                │
+│   - 端口: 8080                           │
+├──────────────────────────────────┤
+│ 💾 PostgreSQL (Autonomous DB)        │
+│   - 管理式数据库服务                 │
+│   - 自动备份和恢复                   │
+├──────────────────────────────────┤
+│ ⚡ Redis Cache                        │
+│   - 用于速率限制和会话管理         │
+└──────────────────────────────────┘
+```
+
+### Oracle Cloud 部署步骤
+
+#### 1. 创建 OCI 资源
+
+```bash
+# 安装 OCI CLI
+bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
+
+# 配置 OCI CLI
+oci setup config
+```
+
+#### 2. 创建 Compute 实例
+
+```bash
+# 创建Always Free ARM 实例
+# VM.Standard.A1.Flex: 4 vCPU + 24GB RAM
+# 操作系统: Ubuntu 22.04
+```
+
+#### 3. 设置数据库
+
+```bash
+# 选择方案A: Autonomous Database (Always Free)
+# - 1 OCPU + 20GB 存储
+# - 自动管理和维护
+
+# 选择方案B: 在Compute实例上运行PostgreSQL
+# - 更灵活，但需要自己管理
+```
+
+#### 4. Docker 部署 (推荐方案)
+
+**为什么使用 Docker：**
+- ✅ **环境一致性**：开发和生产环境完全一致
+- ✅ **部署简单**：一键部署，无需复杂配置
+- ✅ **资源隔离**：更好的安全性和稳定性
+- ✅ **扩展性**：未来可轻松迁移到 Kubernetes
+
+#### 5. 生产部署配置
+
+**`docker-compose.prod.yml`**
+```yaml
+version: '3.8'
+
+services:
+  auth-service:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - KEYSTORE_ENC_KEY=${KEYSTORE_ENC_KEY}
+      - ISSUER_URL=${ISSUER_URL}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - CAPTCHA_SITE_KEY=${CAPTCHA_SITE_KEY}
+      - CAPTCHA_SECRET_KEY=${CAPTCHA_SECRET_KEY}
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tymoe-network
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - tymoe-network
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - auth-service
+    networks:
+      - tymoe-network
+
+volumes:
+  redis_data:
+
+networks:
+  tymoe-network:
+    driver: bridge
+```
+
+**Nginx 配置 (`nginx.conf`)**
+```nginx
+events {
+  worker_connections 1024;
+}
+
+http {
+  upstream auth_service {
+    server auth-service:8080;
+  }
+  
+  # HTTP -> HTTPS 重定向
+  server {
+    listen 80;
+    server_name auth.tymoe.com;
+    return 301 https://$server_name$request_uri;
+  }
+  
+  # HTTPS 配置
+  server {
+    listen 443 ssl http2;
+    server_name auth.tymoe.com;
+    
+    ssl_certificate /etc/nginx/ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/key.pem;
+    
+    # 安全配置
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    location / {
+      proxy_pass http://auth_service;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      
+      # 超时配置
+      proxy_connect_timeout 30s;
+      proxy_send_timeout 30s;
+      proxy_read_timeout 30s;
+    }
+    
+    # 健康检查
+    location /healthz {
+      proxy_pass http://auth_service/healthz;
+      access_log off;
+    }
+  }
+}
+```
+
+#### 6. 部署脚本
+
+**`deploy.sh`**
+```bash
+#!/bin/bash
+set -e
+
+echo "🚀 Starting deployment..."
+
+# 更新代码
+git pull origin main
+
+# 构建和启动服务
+docker-compose -f docker-compose.prod.yml down
+docker-compose -f docker-compose.prod.yml build --no-cache
+docker-compose -f docker-compose.prod.yml up -d
+
+# 等待服务启动
+echo "⏳ Waiting for service to be ready..."
+sleep 30
+
+# 运行数据库迁移
+docker-compose -f docker-compose.prod.yml exec auth-service npm run migrate
+
+# 健康检查
+if curl -f http://localhost:8080/healthz; then
+  echo "✅ Deployment successful!"
+else
+  echo "❌ Deployment failed - health check failed"
+  exit 1
+fi
+
+# 清理旧镜像
+docker image prune -f
+
+echo "🎉 Deployment completed successfully!"
+```
+
+### AWS 部署方案 (备选)
+
+如果未来需要扩展到 AWS，推荐使用：
+
+- **ECS Fargate**: 无服务器容器运行
+- **RDS PostgreSQL**: 管理式数据库
+- **ElastiCache Redis**: 管理式 Redis
+- **Application Load Balancer**: 负载均衡
+- **Route 53**: DNS 管理
+- **Certificate Manager**: SSL 证书管理
+
+### 生产环境初始化
+
+```bash
+# 1. 连接到服务器
+ssh -i ~/.ssh/oci-key ubuntu@your-server-ip
+
+# 2. 克隆项目
+git clone https://github.com/your-username/auth-service.git
+cd auth-service
+
+# 3. 配置环境变量
+cp .env.example .env
+nano .env  # 编辑生产配置
+
+# 4. 部署服务
+chmod +x deploy.sh
+./deploy.sh
+
+# 5. 初始化JWT密钥
+docker-compose -f docker-compose.prod.yml exec auth-service npm run rotate:key
+
+# 6. 创建初始客户端
+docker-compose -f docker-compose.prod.yml exec auth-service npx tsx -e "
+  import { PrismaClient } from '@prisma/client';
+  const prisma = new PrismaClient();
+  prisma.client.create({
+    data: {
+      clientId: 'tymoe-web',
+      name: 'Tymoe Web Application',
+      type: 'PUBLIC',
+      authMethod: 'none',
+      redirectUris: ['https://app.tymoe.com/auth/callback']
+    }
+  }).then(console.log).finally(() => prisma.$disconnect());"
+```
+
+### 监控和维护
+
+#### 日志管理
+```bash
+# 查看应用日志
+docker-compose -f docker-compose.prod.yml logs -f auth-service
+
+# 查看所有服务日志
+docker-compose -f docker-compose.prod.yml logs -f
+
+# 查看特定时间段日志
+docker-compose -f docker-compose.prod.yml logs --since="2h" auth-service
+```
+
+#### 定期维护任务
+```bash
+# 添加到 crontab
+crontab -e
+
+# 每周轮换JWT密钥
+0 2 * * 0 cd /path/to/auth-service && docker-compose -f docker-compose.prod.yml exec auth-service npm run rotate:key
+
+# 每月清理过期密钥
+0 3 1 * * cd /path/to/auth-service && docker-compose -f docker-compose.prod.yml exec auth-service npm run retire:keys
+
+# 每日数据库备份
+0 1 * * * cd /path/to/auth-service && ./scripts/backup-db.sh
+```
+
+### 🐳 Docker化部署 (本地开发)
 
 #### Dockerfile
 ```dockerfile
