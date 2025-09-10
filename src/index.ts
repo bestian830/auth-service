@@ -87,18 +87,52 @@ app.use(express.urlencoded({ extended: false })); // 解析 login 表单
 app.use(cors(corsOptions));
 app.use(sessionMiddleware);
 
+// Health check endpoint (不需要API前缀，用于负载均衡器)
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-// Prometheus metrics端点 (with authentication)
+// Prometheus metrics端点 (不需要API前缀，用于监控系统)
 app.get('/metrics', metricsAuth, async (_req, res) => {
   res.set('Content-Type', registry.contentType);
   res.send(await registry.metrics());
 });
 
+// API v1 路由前缀
+const API_PREFIX = '/api/auth-service/v1';
+
+// API信息端点
+app.get('/', (_req, res) => {
+  res.json({
+    name: 'Auth Service',
+    version: '0.2.11',
+    description: 'Tymoe Authentication and Authorization Service',
+    apiVersion: 'v1',
+    endpoints: {
+      // OIDC标准端点
+      discovery: '/.well-known/openid-configuration',
+      jwks: '/jwks.json',
+      token: '/oauth/token',
+      userinfo: '/userinfo',
+      introspect: '/oauth/introspect',
+      revoke: '/oauth/revoke',
+      // 业务API端点
+      identity: `${API_PREFIX}/identity`,
+      admin: `${API_PREFIX}/admin`,
+      organizations: `${API_PREFIX}/organizations`,
+      // 系统端点
+      health: '/healthz',
+      metrics: '/metrics'
+    },
+    documentation: 'https://docs.tymoe.com/auth-service'
+  });
+});
+
+// OIDC标准端点需要在根路径下（符合OIDC规范）
 app.use(oidcRoutes);
-app.use('/identity', identityRoutes);
-app.use('/admin', adminRoutes);
-app.use('/organizations', organizationRoutes);
+
+// 业务API使用统一前缀
+app.use(`${API_PREFIX}/identity`, identityRoutes);
+app.use(`${API_PREFIX}/admin`, adminRoutes);
+app.use(`${API_PREFIX}/organizations`, organizationRoutes);
 
 // 错误处理中间件 - 生产环境脱敏
 app.use((err: any, req: any, res: any, _next: any) => {
