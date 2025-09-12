@@ -16,6 +16,7 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.back
 
 # Logs
 logs/
@@ -176,3 +177,6 @@ Desktop.ini
 .nfs*
 
 CLAUDE.md
+
+auth-service.tar.gz
+auth-service-fixed.tar.gz
