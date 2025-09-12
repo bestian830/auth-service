@@ -1,24 +1,66 @@
-# Tymoe Auth Service
+# Tymoe Auth Service v0.2.11
 
 > **身份认证与授权中心** - 基于OAuth2/OpenID Connect的企业级身份管理服务
 
+## 🌐 生产环境部署信息
+
+**服务地址**: http://40.233.69.38:80  
+**部署平台**: Oracle Cloud Infrastructure  
+**版本**: v0.2.11  
+
+⚠️ **重要提醒**: 请勿直接修改数据库内容！所有数据操作必须通过API接口进行！
+
 ## 📖 目录
 
-- [系统概述](#系统概述)
-- [数据库架构](#数据库架构)
+- [生产环境部署信息](#生产环境部署信息)
+- [系统概述](#系统概述) 
+- [快速开始-API调用](#快速开始-api调用)
 - [API接口详解](#api接口详解)
+- [数据库架构](#数据库架构)
 - [配置参数详解](#配置参数详解)
-- [reCAPTCHA配置](#recaptcha配置)
-- [邮件系统配置](#邮件系统配置)
 - [与后端服务集成](#与后端服务集成)
-- [在Tymoe生态中的定位](#在tymoe生态中的定位)
 - [部署运维](#部署运维)
 - [开发指南](#开发指南)
 - [故障排除](#故障排除)
 
 ## 系统概述
 
-Tymoe Auth Service 是一个基于 OAuth2/OIDC 标准的认证服务，专为 Tymoe 餐厅管理系统设计。它提供完整的身份认证、授权管理和用户管理功能，支持多组织架构，并具备企业级的安全特性。
+Tymoe Auth Service 是一个基于 OAuth2/OIDC 标准的认证服务，已部署在Oracle Cloud服务器上。它提供完整的身份认证、授权管理和用户管理功能，支持多组织架构，并具备企业级的安全特性。
+
+## 🚀 快速开始-API调用
+
+### 基础信息
+- **服务器地址**: `http://40.233.69.38:80`
+- **API前缀**: `/api/auth-service/v1` (适用于业务API)
+- **OIDC端点**: 直接在根路径下 (符合OIDC标准)
+
+### 常用端点示例
+
+```bash
+# 用户注册
+curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Test123!","name":"测试用户","phone":"+8613800138000","organizationName":"测试公司"}'
+
+# 邮箱验证 
+curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/verify \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","code":"123456"}'
+
+# 用户登录
+curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Test123!"}'
+
+# OIDC Discovery
+curl http://40.233.69.38:80/.well-known/openid-configuration
+
+# 获取公钥
+curl http://40.233.69.38:80/jwks.json
+
+# 健康检查
+curl http://40.233.69.38:80/healthz
+```
 
 ### 核心功能
 
@@ -226,6 +268,28 @@ AuditLog {
 
 ## API接口详解
 
+### 🎯 API端点概览
+
+**基础URL**: `http://40.233.69.38:80`
+
+#### 业务API端点 (使用前缀 `/api/auth-service/v1`)
+- **身份管理**: `/api/auth-service/v1/identity/*`
+- **组织管理**: `/api/auth-service/v1/organizations/*` 
+- **管理接口**: `/api/auth-service/v1/admin/*`
+
+#### 标准OIDC端点 (根路径)
+- **Discovery**: `/.well-known/openid-configuration`
+- **JWKS**: `/jwks.json`
+- **Token**: `/oauth/token`
+- **UserInfo**: `/userinfo`
+- **Token内省**: `/oauth/introspect`
+- **Token撤销**: `/oauth/revoke`
+
+#### 系统端点
+- **健康检查**: `/healthz`
+- **Metrics**: `/metrics`
+- **服务信息**: `/`
+
 ### 🏗️ 服务架构图
 
 ```
@@ -238,37 +302,30 @@ AuditLog {
        └─────────┬────────┴──────────────────┘
                  │
     ┌────────────▼────────────┐
-    │                         │
     │    Auth Service         │
-    │   (身份认证中心)          │
-    │                         │
+    │  (40.233.69.38:80)      │
+    │   Oracle Cloud          │
     └─────────────────────────┘
                  │
     ┌────────────▼────────────┐
-    │                         │
     │     PostgreSQL          │
     │    (用户数据存储)         │
-    │                         │
     └─────────────────────────┘
 ```
 
-### 🔗 服务间通信
+### 1. Identity 身份管理 (`/api/auth-service/v1/identity`)
 
-#### 1. **与业务服务的通信协议**
-
-### 1. Identity 身份管理 (`/identity`)
-
-#### 用户注册
+#### 🔐 用户注册
 ```http
-POST /identity/register
+POST http://40.233.69.38:80/api/auth-service/v1/identity/register
 Content-Type: application/json
 
 {
   "email": "user@example.com",
-  "password": "password123",
+  "password": "Password123!",
   "name": "张三",
   "phone": "+8613812345678",
-  "captcha": "recaptcha_response"
+  "organizationName": "我的公司"
 }
 ```
 
@@ -277,26 +334,46 @@ Content-Type: application/json
 {
   "success": true,
   "message": "Registration successful. Please check your email for verification.",
-  "userId": "user-uuid"
+  "data": {
+    "userId": "user-uuid",
+    "email": "user@example.com",
+    "organizationId": "org-uuid"
+  }
 }
 ```
 
-#### 邮箱验证
+#### 📧 邮箱验证
 ```http
-POST /identity/verify
+POST http://40.233.69.38:80/api/auth-service/v1/identity/verify
+Content-Type: application/json
+
 {
-  "selector": "verification_selector",
-  "token": "123456"
+  "email": "user@example.com", 
+  "code": "123456"
 }
 ```
 
-#### 用户登录
+**响应示例:**
+```json
+{
+  "success": true,
+  "message": "Email verified successfully",
+  "data": {
+    "userId": "user-uuid",
+    "emailVerified": true
+  }
+}
+```
+
+#### 🔑 用户登录
 ```http
-POST /identity/login
+POST http://40.233.69.38:80/api/auth-service/v1/identity/login
+Content-Type: application/json
+
 {
   "email": "user@example.com",
-  "password": "password123",
-  "captcha": "recaptcha_response" // 条件性必需
+  "password": "Password123!",
+  "captcha": "recaptcha_response_token"  // 条件性必需
 }
 ```
 
@@ -306,89 +383,102 @@ POST /identity/login
   "success": true,
   "user": {
     "id": "user-uuid",
-    "email": "user@example.com",
+    "email": "user@example.com", 
     "name": "张三",
     "emailVerified": true
   },
   "organizations": [
     {
       "id": "org-uuid",
-      "name": "我的餐厅",
+      "name": "我的公司",
       "role": "OWNER"
     }
   ]
 }
 ```
 
-#### 获取验证码状态
+#### 🔒 检查验证码状态
 ```http
-GET /identity/captcha-status?email=user@example.com
+GET http://40.233.69.38:80/api/auth-service/v1/identity/captcha-status?email=user@example.com
 ```
 
 **响应:**
 ```json
 {
   "captcha_required": true,
-  "captcha_site_key": "6LcXXXXXXXXXXXXX",
+  "captcha_site_key": "6LeCfr4rAAAAAJkmMv85lfyNR_iorZehl7rYgeG2",
   "threshold": 3
 }
 ```
 
-#### 密码重置流程
+#### 🔓 用户登出
 ```http
-# 1. 请求重置
-POST /identity/forgot-password
+POST http://40.233.69.38:80/api/auth-service/v1/identity/logout
+```
+
+#### 🔄 密码重置流程
+```http
+# 1. 请求重置密码
+POST http://40.233.69.38:80/api/auth-service/v1/identity/forgot-password
+Content-Type: application/json
+
 {
   "email": "user@example.com"
 }
 
-# 2. 确认重置
-POST /identity/reset-password
+# 2. 确认重置密码  
+POST http://40.233.69.38:80/api/auth-service/v1/identity/reset-password
+Content-Type: application/json
+
 {
   "selector": "reset_selector",
-  "token": "123456",
-  "newPassword": "newpassword123"
+  "token": "123456", 
+  "newPassword": "NewPassword123!"
 }
 ```
 
-#### 用户资料管理
+#### 👤 用户资料管理 (需要Bearer Token)
 ```http
 # 获取用户资料
-GET /identity/profile
+GET http://40.233.69.38:80/api/auth-service/v1/identity/me
 Authorization: Bearer <access_token>
 
 # 更新用户资料
-PUT /identity/profile
+PATCH http://40.233.69.38:80/api/auth-service/v1/identity/me
 Authorization: Bearer <access_token>
+Content-Type: application/json
+
 {
   "name": "新姓名",
   "phone": "+8613987654321"
 }
 
 # 修改密码
-POST /identity/change-password
+POST http://40.233.69.38:80/api/auth-service/v1/identity/change-password
 Authorization: Bearer <access_token>
+Content-Type: application/json
+
 {
-  "currentPassword": "oldpassword",
-  "newPassword": "newpassword123"
+  "currentPassword": "OldPassword123!",
+  "newPassword": "NewPassword123!"
 }
 ```
 
-### 2. OAuth2/OIDC 端点
+### 2. OAuth2/OIDC 标准端点 (根路径)
 
-#### Discovery 端点
+#### 🔍 Discovery 端点
 ```http
-GET /.well-known/openid-configuration
+GET http://40.233.69.38:80/.well-known/openid-configuration
 ```
 
-#### 获取公钥
+#### 🔑 获取公钥
 ```http
-GET /jwks.json
+GET http://40.233.69.38:80/jwks.json
 ```
 
-#### Token 端点
+#### 🎫 Token 端点
 ```http
-POST /oauth/token
+POST http://40.233.69.38:80/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=authorization_code&
@@ -409,22 +499,24 @@ code_verifier=<pkce_verifier>
 }
 ```
 
-#### 令牌撤销
+#### 🚫 令牌撤销
 ```http
-POST /oauth/revoke
+POST http://40.233.69.38:80/oauth/revoke
+Content-Type: application/json
+
 {
   "token": "<refresh_token>",
   "token_type_hint": "refresh_token"
 }
 ```
 
-#### 令牌内省
+#### 🔍 令牌内省 (内部服务使用)
 ```http
-POST /oauth/introspect
+POST http://40.233.69.38:80/oauth/introspect
 Authorization: Basic <client_credentials>
-{
-  "token": "<access_token>"
-}
+Content-Type: application/x-www-form-urlencoded
+
+token=<access_token>
 ```
 
 **内省响应:**
@@ -433,25 +525,27 @@ Authorization: Basic <client_credentials>
   "active": true,
   "sub": "user-uuid",
   "client_id": "client-id",
-  "aud": ["tymoe-service-order", "tymoe-service-menu"],
-  "org": "organization_id",
+  "aud": ["tymoe-service"],
+  "organizationId": "org-uuid",
   "scope": "read write",
-  "exp": 1234567890
+  "exp": 1640995200
 }
 ```
 
-#### 用户信息
+#### 👤 用户信息
 ```http
-GET /userinfo
+GET http://40.233.69.38:80/userinfo
 Authorization: Bearer <access_token>
 ```
 
-### 3. 组织管理 (`/organizations`)
+### 3. 组织管理 (`/api/auth-service/v1/organizations`)
 
-#### 创建组织
+#### 🏢 创建组织
 ```http
-POST /organizations
+POST http://40.233.69.38:80/api/auth-service/v1/organizations
 Authorization: Bearer <access_token>
+Content-Type: application/json
+
 {
   "name": "我的餐厅",
   "description": "中式快餐",
@@ -461,54 +555,190 @@ Authorization: Bearer <access_token>
 }
 ```
 
-#### 获取组织列表
+#### 📋 获取用户组织列表
 ```http
-GET /organizations
+GET http://40.233.69.38:80/api/auth-service/v1/organizations
 Authorization: Bearer <access_token>
 ```
 
-#### 更新组织信息
+#### 🔍 获取组织详情
 ```http
-PUT /organizations/{id}
+GET http://40.233.69.38:80/api/auth-service/v1/organizations/{id}
 Authorization: Bearer <access_token>
+```
+
+#### ✏️ 更新组织信息
+```http
+PUT http://40.233.69.38:80/api/auth-service/v1/organizations/{id}
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
 {
   "name": "更新的餐厅名",
-  "location": "新地址"
+  "location": "新地址",
+  "description": "更新的描述"
 }
 ```
 
-### 4. 管理端点 (`/admin`)
-
+#### 🗑️ 删除组织 (软删除)
 ```http
-# JWT密钥轮换
-POST /admin/rotate-keys
-Authorization: Bearer <admin_token>
+DELETE http://40.233.69.38:80/api/auth-service/v1/organizations/{id}
+Authorization: Bearer <access_token>
+```
 
-# 密钥回收
-POST /admin/retire-keys
+### 4. 管理端点 (`/api/auth-service/v1/admin`)
+
+#### 🔓 解锁用户账户
+```http
+POST http://40.233.69.38:80/api/auth-service/v1/admin/unlock/{userId}
 Authorization: Bearer <admin_token>
 ```
+
+**响应示例:**
+```json
+{
+  "ok": true,
+  "userId": "user-uuid",
+  "email": "user@example.com",
+  "unlockedAt": "2023-12-01T10:30:00.000Z",
+  "previousFailureCount": 5,
+  "wasLocked": true
+}
+```
+
+#### 🏥 系统健康检查
+```http
+GET http://40.233.69.38:80/api/auth-service/v1/admin/health
+Authorization: Bearer <admin_token>
+```
+
+**响应示例:**
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "timestamp": "2023-12-01T10:30:00.000Z",
+    "uptime": 86400,
+    "memory": {
+      "rss": 73728,
+      "heapTotal": 49152,
+      "heapUsed": 32768
+    },
+    "version": "0.2.11",
+    "node": "v18.17.0"
+  }
+}
+```
+
+### 5. 系统端点
+
+#### 🏥 健康检查 (公开)
+```http
+GET http://40.233.69.38:80/healthz
+```
+
+**响应:**
+```json
+{
+  "ok": true
+}
+```
+
+#### 📊 Metrics (需要认证)
+```http
+GET http://40.233.69.38:80/metrics
+Authorization: Basic <metrics_token>
+```
+
+#### ℹ️ 服务信息
+```http
+GET http://40.233.69.38:80/
+```
+
+**响应示例:**
+```json
+{
+  "name": "Auth Service",
+  "version": "0.2.11",
+  "description": "Tymoe Authentication and Authorization Service",
+  "apiVersion": "v1",
+  "endpoints": {
+    "discovery": "/.well-known/openid-configuration",
+    "jwks": "/jwks.json",
+    "token": "/oauth/token",
+    "userinfo": "/userinfo",
+    "introspect": "/oauth/introspect",
+    "revoke": "/oauth/revoke",
+    "identity": "/api/auth-service/v1/identity",
+    "admin": "/api/auth-service/v1/admin",
+    "organizations": "/api/auth-service/v1/organizations",
+    "health": "/healthz",
+    "metrics": "/metrics"
+  },
+  "documentation": "https://docs.tymoe.com/auth-service"
+}
+```
+
+### 🎯 HTTP状态码规范
+
+- **200** - 请求成功
+- **201** - 资源创建成功
+- **400** - 请求参数错误
+- **401** - 未认证或Token无效
+- **403** - 已认证但权限不足
+- **404** - 资源未找到
+- **410** - API已移动 (某些组织管理API已移至employee-service)
+- **423** - 账户被锁定
+- **429** - 请求频率过高
+- **500** - 服务器内部错误
+
+### ❌ 错误响应格式
+
+```json
+{
+  "error": "invalid_credentials", 
+  "detail": "Email or password is incorrect"
+}
+```
+
+### ⚠️ 重要注意事项
+
+1. **数据库安全**: 严禁直接修改数据库！所有数据操作必须通过API接口
+2. **API前缀**: 业务API使用 `/api/auth-service/v1` 前缀
+3. **OIDC标准**: OAuth2/OIDC端点在根路径，符合标准规范
+4. **Token安全**: Bearer Token有时效性，请妥善保管
+5. **组织权限**: 用户只能访问自己所属的组织资源
+6. **员工管理**: 用户角色管理API已迁移至employee-service
 
 ## 配置参数详解
 
-**Token验证端点：**
+### 🔧 生产环境配置
+
+**部署信息:**
+- **服务器**: Oracle Cloud Infrastructure
+- **IP地址**: 40.233.69.38:80
+- **数据库**: PostgreSQL (Oracle Cloud)
+- **缓存**: Redis
+- **邮件**: SMTP (mail.eazy.solutions)
+- **版本**: v0.2.11
+
+**内部服务Token验证:**
 ```http
-POST /oauth2/introspect
+POST http://40.233.69.38:80/oauth/introspect
+Authorization: Basic <base64(client_id:client_secret)>
 Content-Type: application/x-www-form-urlencoded
 
-token=<access_token>&
-client_id=<service_client_id>&
-client_secret=<service_secret>
+token=<access_token>
 ```
 
-**响应格式：**
+**响应格式:**
 ```json
 {
   "active": true,
   "sub": "user-uuid",
-  "aud": ["tymoe-service:org-id"],
-  "roles": ["MANAGER"],
-  "organizationId": "org-uuid",
+  "aud": ["tymoe-service"],
+  "organizationId": "org-uuid", 
   "exp": 1640995200
 }
 ```
@@ -2291,7 +2521,36 @@ fi
 - **安全问题**：security@tymoe.com
 - **文档更新**：请提交GitHub Issue
 
+## 🚨 生产环境重要提醒
+
+1. **API服务地址**: http://40.233.69.38:80
+2. **业务API前缀**: `/api/auth-service/v1`
+3. **OIDC端点**: 直接根路径 (如 `/.well-known/openid-configuration`)
+4. **数据库安全**: 严禁直接修改数据库内容！
+5. **员工管理**: 用户角色管理API已迁移至employee-service
+
+## 📝 快速参考
+
+```bash
+# 用户注册
+curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Test123!","name":"测试","organizationName":"测试公司"}'
+
+# 用户登录  
+curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Test123!"}'
+
+# 健康检查
+curl http://40.233.69.38:80/healthz
+
+# OIDC Discovery
+curl http://40.233.69.38:80/.well-known/openid-configuration
+```
+
 ---
 
-*最后更新：2025年9月*
-*版本：v0.2.11*
+**🌐 生产环境**: Oracle Cloud Infrastructure (40.233.69.38:80)  
+**📅 最后更新**: 2024年9月12日  
+**🔖 版本**: v0.2.11
