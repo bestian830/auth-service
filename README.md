@@ -4,8 +4,8 @@
 
 ## 🌐 生产环境部署信息
 
-**服务地址**: http://40.233.69.38:80  
-**部署平台**: Oracle Cloud Infrastructure  
+**服务地址**: https://tymoe.com  
+**部署平台**: 生产环境  
 **版本**: v0.2.11  
 
 ⚠️ **重要提醒**: 请勿直接修改数据库内容！所有数据操作必须通过API接口进行！
@@ -30,7 +30,7 @@ Tymoe Auth Service 是一个基于 OAuth2/OIDC 标准的认证服务，已部署
 ## 🚀 快速开始-API调用
 
 ### 基础信息
-- **服务器地址**: `http://40.233.69.38:80`
+- **服务器地址**: `https://tymoe.com`
 - **API前缀**: `/api/auth-service/v1` (适用于业务API)
 - **OIDC端点**: 直接在根路径下 (符合OIDC标准)
 
@@ -38,28 +38,28 @@ Tymoe Auth Service 是一个基于 OAuth2/OIDC 标准的认证服务，已部署
 
 ```bash
 # 用户注册
-curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/register \
+curl -X POST https://tymoe.com/api/auth-service/v1/identity/register \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"Test123!","name":"测试用户","phone":"+8613800138000","organizationName":"测试公司"}'
 
 # 邮箱验证 
-curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/verify \
+curl -X POST https://tymoe.com/api/auth-service/v1/identity/verify \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","code":"123456"}'
 
 # 用户登录
-curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/login \
+curl -X POST https://tymoe.com/api/auth-service/v1/identity/login \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"Test123!"}'
 
 # OIDC Discovery
-curl http://40.233.69.38:80/.well-known/openid-configuration
+curl https://tymoe.com/.well-known/openid-configuration
 
 # 获取公钥
-curl http://40.233.69.38:80/jwks.json
+curl https://tymoe.com/jwks.json
 
 # 健康检查
-curl http://40.233.69.38:80/healthz
+curl https://tymoe.com/healthz
 ```
 
 ### 核心功能
@@ -86,43 +86,58 @@ curl http://40.233.69.38:80/healthz
 
 ```sql
 -- 用户表：存储基本用户信息
-User {
-  id                    String   @id @default(uuid())
-  email                 String   @unique
-  passwordHash          String
-  name                  String?
-  phone                 String?
-  emailVerifiedAt       DateTime?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  
-  -- 安全控制
-  loginFailureCount     Int      @default(0)
-  lastLoginFailureAt    DateTime?
-  lockedUntil          DateTime?
-  lockReason           String?
-  
-  -- 关联关系
-  ownedOrganizations   Organization[] @relation("OrganizationOwner")
-  emailVerifications   EmailVerification[]
-  passwordResets       PasswordReset[]
-  loginAttempts        LoginAttempt[]
+model User {
+  id                         String   @id @default(uuid())
+  email                      String   @unique
+  passwordHash               String
+
+  -- 基本信息
+  name                       String?
+  phone                      String?  @db.VarChar(32)
+
+  -- 账号状态
+  emailVerifiedAt            DateTime?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  -- 安全相关
+  loginFailureCount          Int      @default(0)
+  lastLoginFailureAt         DateTime?
+  lockedUntil                DateTime?
+  lockReason                 String?  -- "max_failures" | "security_violation"
+
+  -- 关系（简化，移除复杂的业务关系）
+  emailVerifications         EmailVerification[]
+  passwordResets             PasswordReset[]
+  loginAttempts              LoginAttempt[]
+  ownedOrganizations         Organization[] @relation("OrganizationOwner")
 }
 
 -- 组织表：餐厅/店铺信息
-Organization {
-  id           String   @id @default(uuid())
-  name         String
-  ownerId      String
-  description  String?
-  location     String?   -- 店铺地址
-  phone        String?   -- 店铺电话
-  email        String?   -- 店铺邮箱
-  status       OrganizationStatus @default(ACTIVE)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  
-  owner        User @relation("OrganizationOwner")
+model Organization {
+  id                String   @id @default(uuid())
+  name              String
+  ownerId           String   -- 创建者/老板
+
+  -- 基本信息
+  description       String?
+
+  -- 联系信息（支持多店铺不同联系方式）
+  location          String?  -- 店铺地址
+  phone             String?  @db.VarChar(32) -- 店铺电话
+  email             String?  @db.VarChar(255) -- 店铺邮箱
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  -- 状态（简化）
+  status            OrganizationStatus @default(ACTIVE)
+
+  -- 关系（支持一个老板多个店铺）
+  owner             User       @relation("OrganizationOwner", fields: [ownerId], references: [id])
+
+  @@index([ownerId])
+  @@index([status])
 }
 
 enum OrganizationStatus {
@@ -135,8 +150,8 @@ enum OrganizationStatus {
 ### OAuth2/OIDC 模型
 
 ```sql
--- OAuth2 客户端
-Client {
+-- OAuth2 客户端（重要：需要预先注入）
+model Client {
   id           String   @id @default(cuid())
   clientId     String   @unique
   name         String?
@@ -144,40 +159,81 @@ Client {
   secretHash   String?
   authMethod   TokenEndpointAuthMethod @default(none)
   redirectUris String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+-- 重要：Client表需要预先注入原因：
+-- 1. OAuth2安全性：客户端信息必须由管理员预先注册
+-- 2. 防止恶意客户端：避免任意创建未授权客户端
+-- 3. 管理后端服务：每个微服务都需要独立的客户端身份
+-- 4. 符合OAuth2标准：所有客户端都必须在授权服务器中注册
+
+enum ClientType {
+  PUBLIC
+  CONFIDENTIAL
+}
+
+enum TokenEndpointAuthMethod {
+  none
+  client_secret_basic
+  client_secret_post
 }
 
 -- 授权码
-AuthorizationCode {
-  id                  String   @id @default(uuid())
-  clientId            String
-  redirectUri         String
-  codeChallenge       String
-  codeChallengeMethod String   @default("S256")
-  scope               String?
-  state               String?
-  
+model AuthorizationCode {
+  id                   String   @id @default(uuid())
+  clientId             String
+  redirectUri          String
+  codeChallenge        String
+  codeChallengeMethod  String   @default("S256")
+  scope                String?
+  state                String?
+  nonce                String?
+
   -- 主体信息
-  subjectUserId       String?
-  subjectDeviceId     String?
-  organizationId      String?  -- 上下文组织
-  
+  subjectUserId        String?
+  subjectDeviceId      String?
+  organizationId       String?  -- 上下文组织
+
   -- 生命周期
-  createdAt           DateTime @default(now())
-  expiresAt           DateTime
-  used                Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  expiresAt            DateTime
+  used                 Boolean  @default(false)
+  usedAt               DateTime?
+
+  @@index([clientId])
+  @@index([subjectUserId])
+  @@index([expiresAt])
 }
 
 -- 刷新令牌
-RefreshToken {
+model RefreshToken {
   id               String   @id
   familyId         String
   subjectUserId    String?
   subjectDeviceId  String?
   clientId         String
   organizationId   String?  -- 令牌关联的组织
+
   status           RefreshTokenStatus @default(ACTIVE)
   createdAt        DateTime @default(now())
   expiresAt        DateTime
+  rotatedAt        DateTime?
+  revokedAt        DateTime?
+  revokeReason     String?
+  lastSeenAt       DateTime @default(now())
+
+  @@index([familyId])
+  @@index([subjectUserId])
+  @@index([status])
+  @@index([lastSeenAt])
+}
+
+enum RefreshTokenStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
 }
 ```
 
@@ -185,7 +241,7 @@ RefreshToken {
 
 ```sql
 -- 邮箱验证
-EmailVerification {
+model EmailVerification {
   id          String   @id @default(uuid())
   userId      String
   selector    String   @unique
@@ -193,32 +249,56 @@ EmailVerification {
   purpose     String   -- "signup" | "email_change"
   sentTo      String
   expiresAt   DateTime
+  consumedAt  DateTime?
   attempts    Int      @default(0)
-  
+  createdAt   DateTime @default(now())
+
   -- 重发控制
   reuseWindowExpiresAt DateTime?
   lastSentAt           DateTime @default(now())
   resendCount          Int      @default(0)
+
+  -- 高级加密（可选，暂未启用）
+  tokenEnc    String?  -- AES加密的验证码（比tokenHash更安全）
+  iv          String?  -- 加密初始向量
+  tag         String?  -- 认证标签
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 -- 密码重置
-PasswordReset {
+model PasswordReset {
   id          String   @id @default(uuid())
   userId      String
   selector    String   @unique
   tokenHash   String
   sentTo      String
   expiresAt   DateTime
+  consumedAt  DateTime?
   attempts    Int      @default(0)
-  
+  createdAt   DateTime @default(now())
+
   -- 重发控制
   reuseWindowExpiresAt DateTime?
   lastSentAt           DateTime @default(now())
   resendCount          Int      @default(0)
+
+  -- 高级加密（可选，暂未启用）
+  tokenEnc    String?  -- AES加密的验证码（比tokenHash更安全）
+  iv          String?  -- 加密初始向量
+  tag         String?  -- 认证标签
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 -- 登录记录
-LoginAttempt {
+model LoginAttempt {
   id             String   @id @default(uuid())
   userId         String?
   email          String
@@ -229,6 +309,14 @@ LoginAttempt {
   failureReason  String?
   captchaUsed    Boolean  @default(false)
   attemptAt      DateTime @default(now())
+
+  user           User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([email])
+  @@index([ipAddress])
+  @@index([attemptAt])
+  @@index([success])
 }
 ```
 
@@ -236,7 +324,7 @@ LoginAttempt {
 
 ```sql
 -- JWT 签名密钥管理
-Key {
+model Key {
   kid          String   @id
   type         String   -- 'RSA'
   status       KeyStatus
@@ -245,6 +333,8 @@ Key {
   createdAt    DateTime @default(now())
   activatedAt  DateTime?
   retiredAt    DateTime?
+
+  @@index([status])
 }
 
 enum KeyStatus {
@@ -254,7 +344,7 @@ enum KeyStatus {
 }
 
 -- 审计日志
-AuditLog {
+model AuditLog {
   id          String   @id @default(uuid())
   at          DateTime @default(now())
   ip          String?
@@ -263,6 +353,10 @@ AuditLog {
   action      String
   subject     String?
   detail      Json?
+
+  @@index([actorUserId])
+  @@index([action])
+  @@index([at])
 }
 ```
 
@@ -270,7 +364,7 @@ AuditLog {
 
 ### 🎯 API端点概览
 
-**基础URL**: `http://40.233.69.38:80`
+**基础URL**: `https://tymoe.com`
 
 #### 业务API端点 (使用前缀 `/api/auth-service/v1`)
 - **身份管理**: `/api/auth-service/v1/identity/*`
@@ -302,9 +396,9 @@ AuditLog {
        └─────────┬────────┴──────────────────┘
                  │
     ┌────────────▼────────────┐
-    │    Auth Service         │
-    │  (40.233.69.38:80)      │
-    │   Oracle Cloud          │
+    │    Tymoe Auth Service   │
+    │      (tymoe.com)        │
+    │    身份认证与授权中心      │
     └─────────────────────────┘
                  │
     ┌────────────▼────────────┐
@@ -313,11 +407,119 @@ AuditLog {
     └─────────────────────────┘
 ```
 
+### 🔄 系统交互时序图
+
+#### 用户注册与登录完整流程
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Frontend as 前端应用
+    participant Auth as Auth Service
+    participant DB as 数据库
+    participant Mail as 邮件服务
+    participant Business as 业务服务
+
+    %% 用户注册流程
+    Note over User,Business: 用户注册流程
+    User->>Frontend: 1. 提交注册信息
+    Frontend->>Auth: 2. POST /identity/register
+    Auth->>DB: 3. 检查邮箱是否存在
+    Auth->>DB: 4. 创建用户记录
+    Auth->>DB: 5. 创建组织记录
+    Auth->>Mail: 6. 发送验证邮件
+    Auth-->>Frontend: 7. 返回成功响应
+    Frontend-->>User: 8. 显示"请检查邮箱"
+
+    %% 邮箱验证流程
+    Note over User,Business: 邮箱验证流程
+    User->>User: 9. 查收邮件，获取验证码
+    User->>Frontend: 10. 输入验证码
+    Frontend->>Auth: 11. POST /identity/verify
+    Auth->>DB: 12. 验证并激活账户
+    Auth-->>Frontend: 13. 验证成功
+    Frontend-->>User: 14. 显示"验证成功"
+
+    %% 用户登录流程
+    Note over User,Business: 用户登录流程
+    User->>Frontend: 15. 输入登录信息
+    Frontend->>Auth: 16. GET /identity/captcha-status (检查是否需要验证码)
+    Auth-->>Frontend: 17. 返回验证码状态
+    Frontend->>Auth: 18. POST /identity/login
+    Auth->>DB: 19. 验证用户凭据
+    Auth->>DB: 20. 记录登录尝试
+    Auth-->>Frontend: 21. 返回用户信息和组织列表
+
+    %% OAuth2授权流程
+    Note over User,Business: OAuth2令牌交换
+    Frontend->>Auth: 22. POST /oauth/token (授权码换取令牌)
+    Auth->>DB: 23. 验证客户端和授权
+    Auth->>DB: 24. 生成访问令牌和刷新令牌
+    Auth-->>Frontend: 25. 返回JWT令牌
+    Frontend-->>User: 26. 登录成功，跳转到应用
+
+    %% 业务API调用
+    Note over User,Business: 访问业务服务
+    User->>Frontend: 27. 操作业务功能
+    Frontend->>Business: 28. API调用 (携带JWT令牌)
+    Business->>Auth: 29. POST /oauth/introspect (验证令牌)
+    Auth-->>Business: 30. 返回令牌信息
+    Business->>Business: 31. 执行业务逻辑
+    Business-->>Frontend: 32. 返回业务数据
+    Frontend-->>User: 33. 显示结果
+```
+
+#### 微服务间认证流程
+
+```mermaid
+sequenceDiagram
+    participant Client as 前端客户端
+    participant Gateway as API网关
+    participant Auth as Auth Service
+    participant Service as 业务服务
+    participant DB as 数据库
+
+    Note over Client,DB: 微服务间认证与授权
+
+    Client->>Gateway: 1. 业务请求 (Bearer Token)
+    Gateway->>Auth: 2. POST /oauth/introspect
+    Note right of Auth: 验证令牌有效性<br/>提取用户和组织信息
+    Auth->>DB: 3. 查询令牌状态
+    Auth-->>Gateway: 4. 令牌验证结果
+
+    alt 令牌有效
+        Gateway->>Service: 5. 转发请求 (附加用户信息)
+        Service->>Service: 6. 执行业务逻辑
+        Service-->>Gateway: 7. 返回结果
+        Gateway-->>Client: 8. 返回响应
+    else 令牌无效
+        Gateway-->>Client: 401 Unauthorized
+        Client->>Auth: 9. 刷新令牌或重新登录
+    end
+```
+
+#### 系统在Tymoe生态中的定位
+
+**Auth Service 作为认证中心的核心作用：**
+
+1. **统一身份管理**: 为整个Tymoe生态系统提供唯一的用户身份源
+2. **OAuth2/OIDC 标准**: 符合行业标准，方便第三方集成
+3. **微服务认证**: 为所有业务服务提供令牌验证
+4. **多租户支持**: 支持一个用户管理多个组织(餐厅/美容院)
+5. **安全防护**: 提供速率限制、账户锁定、审计日志等安全功能
+
+**与其他服务的关系：**
+- **ploml**: 美业SaaS，通过OAuth2接入认证
+- **mopai**: 餐饮SaaS，通过OAuth2接入认证
+- **employee-service**: 员工管理服务，负责组织内部员工角色管理
+- **subscription-service**: 订阅服务，管理付费和权限
+- **其他业务服务**: 通过token introspection验证用户身份
+
 ### 1. Identity 身份管理 (`/api/auth-service/v1/identity`)
 
 #### 🔐 用户注册
 ```http
-POST http://40.233.69.38:80/api/auth-service/v1/identity/register
+POST https://tymoe.com/api/auth-service/v1/identity/register
 Content-Type: application/json
 
 {
@@ -344,7 +546,7 @@ Content-Type: application/json
 
 #### 📧 邮箱验证
 ```http
-POST http://40.233.69.38:80/api/auth-service/v1/identity/verify
+POST https://tymoe.com/api/auth-service/v1/identity/verify
 Content-Type: application/json
 
 {
@@ -367,7 +569,7 @@ Content-Type: application/json
 
 #### 🔑 用户登录
 ```http
-POST http://40.233.69.38:80/api/auth-service/v1/identity/login
+POST https://tymoe.com/api/auth-service/v1/identity/login
 Content-Type: application/json
 
 {
@@ -399,7 +601,7 @@ Content-Type: application/json
 
 #### 🔒 检查验证码状态
 ```http
-GET http://40.233.69.38:80/api/auth-service/v1/identity/captcha-status?email=user@example.com
+GET https://tymoe.com/api/auth-service/v1/identity/captcha-status?email=user@example.com
 ```
 
 **响应:**
@@ -413,38 +615,38 @@ GET http://40.233.69.38:80/api/auth-service/v1/identity/captcha-status?email=use
 
 #### 🔓 用户登出
 ```http
-POST http://40.233.69.38:80/api/auth-service/v1/identity/logout
+POST https://tymoe.com/api/auth-service/v1/identity/logout
 ```
 
 #### 🔄 密码重置流程
 ```http
 # 1. 请求重置密码
-POST http://40.233.69.38:80/api/auth-service/v1/identity/forgot-password
+POST https://tymoe.com/api/auth-service/v1/identity/forgot-password
 Content-Type: application/json
 
 {
   "email": "user@example.com"
 }
 
-# 2. 确认重置密码  
-POST http://40.233.69.38:80/api/auth-service/v1/identity/reset-password
+# 2. 确认重置密码
+POST https://tymoe.com/api/auth-service/v1/identity/reset-password
 Content-Type: application/json
 
 {
-  "selector": "reset_selector",
-  "token": "123456", 
-  "newPassword": "NewPassword123!"
+  "email": "user@example.com",
+  "code": "123456",
+  "password": "NewPassword123!"
 }
 ```
 
 #### 👤 用户资料管理 (需要Bearer Token)
 ```http
 # 获取用户资料
-GET http://40.233.69.38:80/api/auth-service/v1/identity/me
+GET https://tymoe.com/api/auth-service/v1/identity/me
 Authorization: Bearer <access_token>
 
 # 更新用户资料
-PATCH http://40.233.69.38:80/api/auth-service/v1/identity/me
+PATCH https://tymoe.com/api/auth-service/v1/identity/me
 Authorization: Bearer <access_token>
 Content-Type: application/json
 
@@ -454,7 +656,7 @@ Content-Type: application/json
 }
 
 # 修改密码
-POST http://40.233.69.38:80/api/auth-service/v1/identity/change-password
+POST https://tymoe.com/api/auth-service/v1/identity/change-password
 Authorization: Bearer <access_token>
 Content-Type: application/json
 
@@ -468,17 +670,17 @@ Content-Type: application/json
 
 #### 🔍 Discovery 端点
 ```http
-GET http://40.233.69.38:80/.well-known/openid-configuration
+GET https://tymoe.com/.well-known/openid-configuration
 ```
 
 #### 🔑 获取公钥
 ```http
-GET http://40.233.69.38:80/jwks.json
+GET https://tymoe.com/jwks.json
 ```
 
 #### 🎫 Token 端点
 ```http
-POST http://40.233.69.38:80/oauth/token
+POST https://tymoe.com/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=authorization_code&
@@ -501,7 +703,7 @@ code_verifier=<pkce_verifier>
 
 #### 🚫 令牌撤销
 ```http
-POST http://40.233.69.38:80/oauth/revoke
+POST https://tymoe.com/oauth/revoke
 Content-Type: application/json
 
 {
@@ -512,7 +714,7 @@ Content-Type: application/json
 
 #### 🔍 令牌内省 (内部服务使用)
 ```http
-POST http://40.233.69.38:80/oauth/introspect
+POST https://tymoe.com/oauth/introspect
 Authorization: Basic <client_credentials>
 Content-Type: application/x-www-form-urlencoded
 
@@ -534,7 +736,7 @@ token=<access_token>
 
 #### 👤 用户信息
 ```http
-GET http://40.233.69.38:80/userinfo
+GET https://tymoe.com/userinfo
 Authorization: Bearer <access_token>
 ```
 
@@ -542,7 +744,7 @@ Authorization: Bearer <access_token>
 
 #### 🏢 创建组织
 ```http
-POST http://40.233.69.38:80/api/auth-service/v1/organizations
+POST https://tymoe.com/api/auth-service/v1/organizations
 Authorization: Bearer <access_token>
 Content-Type: application/json
 
@@ -557,19 +759,19 @@ Content-Type: application/json
 
 #### 📋 获取用户组织列表
 ```http
-GET http://40.233.69.38:80/api/auth-service/v1/organizations
+GET https://tymoe.com/api/auth-service/v1/organizations
 Authorization: Bearer <access_token>
 ```
 
 #### 🔍 获取组织详情
 ```http
-GET http://40.233.69.38:80/api/auth-service/v1/organizations/{id}
+GET https://tymoe.com/api/auth-service/v1/organizations/{id}
 Authorization: Bearer <access_token>
 ```
 
 #### ✏️ 更新组织信息
 ```http
-PUT http://40.233.69.38:80/api/auth-service/v1/organizations/{id}
+PUT https://tymoe.com/api/auth-service/v1/organizations/{id}
 Authorization: Bearer <access_token>
 Content-Type: application/json
 
@@ -582,7 +784,7 @@ Content-Type: application/json
 
 #### 🗑️ 删除组织 (软删除)
 ```http
-DELETE http://40.233.69.38:80/api/auth-service/v1/organizations/{id}
+DELETE https://tymoe.com/api/auth-service/v1/organizations/{id}
 Authorization: Bearer <access_token>
 ```
 
@@ -590,7 +792,7 @@ Authorization: Bearer <access_token>
 
 #### 🔓 解锁用户账户
 ```http
-POST http://40.233.69.38:80/api/auth-service/v1/admin/unlock/{userId}
+POST https://tymoe.com/api/auth-service/v1/admin/unlock/{userId}
 Authorization: Bearer <admin_token>
 ```
 
@@ -608,7 +810,7 @@ Authorization: Bearer <admin_token>
 
 #### 🏥 系统健康检查
 ```http
-GET http://40.233.69.38:80/api/auth-service/v1/admin/health
+GET https://tymoe.com/api/auth-service/v1/admin/health
 Authorization: Bearer <admin_token>
 ```
 
@@ -635,7 +837,7 @@ Authorization: Bearer <admin_token>
 
 #### 🏥 健康检查 (公开)
 ```http
-GET http://40.233.69.38:80/healthz
+GET https://tymoe.com/healthz
 ```
 
 **响应:**
@@ -647,13 +849,13 @@ GET http://40.233.69.38:80/healthz
 
 #### 📊 Metrics (需要认证)
 ```http
-GET http://40.233.69.38:80/metrics
+GET https://tymoe.com/metrics
 Authorization: Basic <metrics_token>
 ```
 
 #### ℹ️ 服务信息
 ```http
-GET http://40.233.69.38:80/
+GET https://tymoe.com/
 ```
 
 **响应示例:**
@@ -697,10 +899,62 @@ GET http://40.233.69.38:80/
 
 ```json
 {
-  "error": "invalid_credentials", 
+  "error": "invalid_credentials",
   "detail": "Email or password is incorrect"
 }
 ```
+
+### 📋 详细错误代码说明
+
+#### 身份认证错误 (4xx)
+
+| 错误代码 | HTTP状态 | 说明 | 解决方案 |
+|---------|---------|------|----------|
+| `invalid_request` | 400 | 请求参数缺失或格式错误 | 检查必需字段和数据格式 |
+| `invalid_email_format` | 400 | 邮箱格式不正确 | 确保邮箱符合标准格式 |
+| `weak_password` | 400 | 密码强度不够 | 使用包含大小写字母、数字的8位以上密码 |
+| `email_already_registered` | 409 | 邮箱已被注册 | 使用其他邮箱或尝试登录 |
+| `invalid_code` | 400 | 验证码错误或已过期 | 输入正确的6位数字验证码 |
+| `code_already_used` | 400 | 验证码已被使用 | 请求新的验证码 |
+| `too_many_attempts` | 429 | 验证码尝试次数过多 | 等待或请求新验证码 |
+| `invalid_credentials` | 401 | 邮箱或密码错误 | 检查登录信息 |
+| `account_not_verified` | 401 | 账户未验证 | 完成邮箱验证 |
+| `account_locked` | 423 | 账户已被锁定 | 联系管理员或等待锁定期结束 |
+| `captcha_required` | 400 | 需要验证码 | 完成reCAPTCHA验证 |
+| `captcha_invalid` | 400 | 验证码验证失败 | 重新完成验证码 |
+
+#### OAuth2/OIDC错误
+
+| 错误代码 | HTTP状态 | 说明 | 解决方案 |
+|---------|---------|------|----------|
+| `invalid_client` | 401 | 客户端ID无效 | 检查客户端配置 |
+| `invalid_grant` | 400 | 授权码无效或已过期 | 重新获取授权码 |
+| `invalid_token` | 401 | 访问令牌无效 | 刷新令牌或重新登录 |
+| `expired_token` | 401 | 令牌已过期 | 使用refresh token刷新 |
+| `insufficient_scope` | 403 | 权限范围不足 | 请求正确的权限范围 |
+
+#### 组织管理错误
+
+| 错误代码 | HTTP状态 | 说明 | 解决方案 |
+|---------|---------|------|----------|
+| `access_denied` | 403 | 无权访问该组织 | 确认用户权限 |
+| `organization_not_found` | 404 | 组织不存在 | 检查组织ID |
+| `organization_suspended` | 403 | 组织已被暂停 | 联系管理员 |
+
+#### 速率限制错误
+
+| 错误代码 | HTTP状态 | 说明 | 解决方案 |
+|---------|---------|------|----------|
+| `too_many_requests` | 429 | 请求频率过高 | 稍后重试，遵守速率限制 |
+| `rate_limit_exceeded` | 429 | 超出API调用限制 | 等待限制重置或升级套餐 |
+
+#### 服务器错误 (5xx)
+
+| 错误代码 | HTTP状态 | 说明 | 解决方案 |
+|---------|---------|------|----------|
+| `server_error` | 500 | 服务器内部错误 | 稍后重试或联系技术支持 |
+| `service_unavailable` | 503 | 服务暂时不可用 | 稍后重试 |
+| `database_error` | 500 | 数据库连接错误 | 联系技术支持 |
 
 ### ⚠️ 重要注意事项
 
@@ -725,7 +979,7 @@ GET http://40.233.69.38:80/
 
 **内部服务Token验证:**
 ```http
-POST http://40.233.69.38:80/oauth/introspect
+POST https://tymoe.com/oauth/introspect
 Authorization: Basic <base64(client_id:client_secret)>
 Content-Type: application/x-www-form-urlencoded
 
@@ -2523,7 +2777,7 @@ fi
 
 ## 🚨 生产环境重要提醒
 
-1. **API服务地址**: http://40.233.69.38:80
+1. **API服务地址**: https://tymoe.com
 2. **业务API前缀**: `/api/auth-service/v1`
 3. **OIDC端点**: 直接根路径 (如 `/.well-known/openid-configuration`)
 4. **数据库安全**: 严禁直接修改数据库内容！
@@ -2533,20 +2787,20 @@ fi
 
 ```bash
 # 用户注册
-curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/register \
+curl -X POST https://tymoe.com/api/auth-service/v1/identity/register \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"Test123!","name":"测试","organizationName":"测试公司"}'
 
 # 用户登录  
-curl -X POST http://40.233.69.38:80/api/auth-service/v1/identity/login \
+curl -X POST https://tymoe.com/api/auth-service/v1/identity/login \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"Test123!"}'
 
 # 健康检查
-curl http://40.233.69.38:80/healthz
+curl https://tymoe.com/healthz
 
 # OIDC Discovery
-curl http://40.233.69.38:80/.well-known/openid-configuration
+curl https://tymoe.com/.well-known/openid-configuration
 ```
 
 ---
