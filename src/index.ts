@@ -12,7 +12,7 @@ import organizationRoutes from './routes/organizations.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
-import { metricsAuth } from '../middleware/metricsAuth.js';
+import { metricsAuth } from '../src/middleware/metricsAuth.js';
 
 // 创建 logger
 export const logger = pino({
@@ -161,7 +161,7 @@ async function startServer() {
     console.log('✅ JWT signing keys ready');
       
     // 验证邮件配置
-    const { testEmailConfiguration } = await import('../services/mailer.js');
+    const { testEmailConfiguration } = await import('../src/services/mailer.js');
     const emailTest = await testEmailConfiguration();
     
     if (emailTest.success) {

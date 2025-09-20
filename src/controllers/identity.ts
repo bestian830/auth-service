@@ -3,12 +3,12 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { prisma } from '../infra/prisma.js';
 import { env } from '../config/env.js';
-import { audit } from '../../middleware/audit.js';
-import { IdentityService } from '../../services/identity.js';
-import { revokeFamily, signAccessToken, issueRefreshFamily } from '../../services/token.js';
+import { audit } from '../middleware/audit.js';
+import { IdentityService } from '../services/identity.js';
+import { revokeFamily, signAccessToken, issueRefreshFamily } from '../services/token.js';
 import { createRateLimiter, isRedisConnected } from '../infra/redis.js';
-import { verifyCaptcha } from '../../middleware/captcha.js';
-import type { RefreshFamilyRow } from '../../types/prisma.js';
+import { verifyCaptcha } from '../middleware/captcha.js';
+import type { RefreshFamilyRow } from '../types/prisma.js';
 
 const identityService = new IdentityService();
 

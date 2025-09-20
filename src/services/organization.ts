@@ -1,5 +1,5 @@
 // src/services/organization.ts
-import { prisma } from '../src/infra/prisma.js';
+import { prisma } from '../infra/prisma.js';
 import { OrganizationStatus } from '@prisma/client';
 import { audit } from '../middleware/audit.js';
 

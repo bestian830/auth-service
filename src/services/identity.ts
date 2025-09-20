@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { prisma } from '../src/infra/prisma.js';
+import { prisma } from '../infra/prisma.js';
 import { env } from '../config/env.js';
 import { getMailer } from './mailer.js';
 import { Templates } from './templates.js';

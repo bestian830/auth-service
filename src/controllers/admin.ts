@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../infra/prisma.js';
-import { audit } from '../../middleware/audit.js';
+import { audit } from '../middleware/audit.js';
 import { createRateLimiter, isRedisConnected } from '../infra/redis.js';
 
 

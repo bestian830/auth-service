@@ -1,7 +1,7 @@
 // src/services/clientAuth.ts
 import { Request } from 'express';
 import * as bcrypt from 'bcryptjs';
-import { prisma } from '../src/infra/prisma.js';
+import { prisma } from '../infra/prisma.js';
 
 export type ClientType = 'PUBLIC' | 'CONFIDENTIAL';
 export type TokenEndpointAuthMethod = 'none' | 'client_secret_basic' | 'client_secret_post';

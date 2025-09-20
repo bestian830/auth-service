@@ -1,9 +1,9 @@
 // src/services/token.ts
-import { env } from '../src/config/env.js';
-import { prisma } from '../src/infra/prisma.js';
+import { env } from '../config/env.js';
+import { prisma } from '../infra/prisma.js';
 import * as crypto from 'crypto';
 import { SignJWT, importPKCS8, JWTPayload } from 'jose';
-import { open } from '../src/infra/cryptoVault.js';
+import { open } from '../infra/cryptoVault.js';
 
 export type AccessClaims = {
   jti: string; 
