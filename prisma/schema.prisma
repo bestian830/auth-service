@@ -1,0 +1,272 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===== 核心身份管理模型 =====
+
+model User {
+  id                         String   @id @default(uuid())
+  email                      String   @unique
+  passwordHash               String
+
+  // 基本信息（Auth-service职责范围）
+  name                       String?
+  phone                      String?  @db.VarChar(32)
+
+  // 账号状态
+  emailVerifiedAt            DateTime?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  // 安全相关
+  loginFailureCount          Int      @default(0)
+  lastLoginFailureAt         DateTime?
+  lockedUntil                DateTime?
+  lockReason                 String?  // "max_failures" | "security_violation"
+
+  // 关系（简化，移除复杂的业务关系）
+  emailVerifications         EmailVerification[]
+  passwordResets             PasswordReset[]
+  loginAttempts              LoginAttempt[]
+  ownedOrganizations         Organization[] @relation("OrganizationOwner")
+}
+
+// AccountType枚举已删除 - 只有老板能注册，不需要区分账号类型
+
+model Organization {
+  id                String   @id @default(uuid())
+  name              String
+  ownerId           String   // 创建者/老板
+
+  // 基本信息（Auth-service职责范围）
+  description       String?
+
+  // 联系信息（支持多店铺不同联系方式）
+  location          String?  // 店铺地址
+  phone             String?  @db.VarChar(32) // 店铺电话
+  email             String?  @db.VarChar(255) // 店铺邮箱
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // 状态（简化）
+  status            OrganizationStatus @default(ACTIVE)
+
+  // 关系（支持一个老板多个店铺）
+  owner             User       @relation("OrganizationOwner", fields: [ownerId], references: [id])
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+// UserRole移到Employee-Service中管理
+// 这里只保留auth-service需要的核心模型
+
+// Device模型移到Device-Service中管理
+// Auth-service只负责OAuth2客户端的基础认证
+
+// ===== OAuth2/OIDC 相关模型 =====
+
+model Client {
+  id           String   @id @default(cuid())
+  clientId     String   @unique
+  name         String?
+  type         ClientType @default(PUBLIC)
+  secretHash   String?
+  authMethod   TokenEndpointAuthMethod @default(none)
+  redirectUris String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum ClientType {
+  PUBLIC
+  CONFIDENTIAL
+}
+
+enum TokenEndpointAuthMethod {
+  none
+  client_secret_basic
+  client_secret_post
+}
+
+model AuthorizationCode {
+  id                   String   @id @default(uuid())
+  clientId             String
+  redirectUri          String
+  codeChallenge        String
+  codeChallengeMethod  String   @default("S256")
+  scope                String?
+  state                String?
+  nonce                String?
+
+  // 主体信息
+  subjectUserId        String?
+  subjectDeviceId      String?
+  organizationId       String?  // 上下文组织
+
+  // 生命周期
+  createdAt            DateTime @default(now())
+  expiresAt            DateTime
+  used                 Boolean  @default(false)
+  usedAt               DateTime?
+
+  @@index([clientId])
+  @@index([subjectUserId])
+  @@index([expiresAt])
+}
+
+model RefreshToken {
+  id               String   @id
+  familyId         String
+  subjectUserId    String?
+  subjectDeviceId  String?
+  clientId         String
+  organizationId   String?  // 令牌关联的组织
+
+  status           RefreshTokenStatus @default(ACTIVE)
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime
+  rotatedAt        DateTime?
+  revokedAt        DateTime?
+  revokeReason     String?
+  lastSeenAt       DateTime @default(now())
+
+  @@index([familyId])
+  @@index([subjectUserId])
+  @@index([status])
+  @@index([lastSeenAt])
+}
+
+enum RefreshTokenStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
+}
+
+// ===== 密钥管理 =====
+
+model Key {
+  kid          String   @id
+  type         String   // 'RSA'
+  status       KeyStatus
+  privatePem   String   // 加密存储的私钥
+  publicJwk    Json
+  createdAt    DateTime @default(now())
+  activatedAt  DateTime?
+  retiredAt    DateTime?
+
+  @@index([status])
+}
+
+enum KeyStatus {
+  ACTIVE
+  GRACE
+  RETIRED
+}
+
+// ===== 身份验证相关 =====
+
+model EmailVerification {
+  id          String   @id @default(uuid())
+  userId      String
+  selector    String   @unique
+  tokenHash   String
+  purpose     String   // "signup" | "email_change"
+  sentTo      String
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  // 重发控制
+  reuseWindowExpiresAt DateTime?
+  lastSentAt           DateTime @default(now())
+  resendCount          Int      @default(0)
+
+  // 高级加密（可选，暂未启用）
+  tokenEnc    String?  // AES加密的验证码（比tokenHash更安全）
+  iv          String?  // 加密初始向量
+  tag         String?  // 认证标签
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordReset {
+  id          String   @id @default(uuid())
+  userId      String
+  selector    String   @unique
+  tokenHash   String
+  sentTo      String
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  // 重发控制
+  reuseWindowExpiresAt DateTime?
+  lastSentAt           DateTime @default(now())
+  resendCount          Int      @default(0)
+
+  // 高级加密（可选，暂未启用）
+  tokenEnc    String?  // AES加密的验证码（比tokenHash更安全）
+  iv          String?  // 加密初始向量
+  tag         String?  // 认证标签
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model LoginAttempt {
+  id             String   @id @default(uuid())
+  userId         String?
+  email          String
+  organizationId String?  // 登录上下文组织
+  ipAddress      String
+  userAgent      String?
+  success        Boolean
+  failureReason  String?
+  captchaUsed    Boolean  @default(false)
+  attemptAt      DateTime @default(now())
+
+  user           User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([email])
+  @@index([ipAddress])
+  @@index([attemptAt])
+  @@index([success])
+}
+
+// ===== 审计日志 =====
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  at          DateTime @default(now())
+  ip          String?
+  userAgent   String?
+  actorUserId String?
+  action      String
+  subject     String?
+  detail      Json?
+
+  @@index([actorUserId])
+  @@index([action])
+  @@index([at])
+}
