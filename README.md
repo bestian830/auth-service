@@ -1,4 +1,4 @@
-# Tymoe Auth Service v0.2.11
+# Tymoe Auth Service v2.0.0
 
 > **身份认证与授权中心** - 基于OAuth2/OpenID Connect的企业级身份管理服务
 
@@ -6,7 +6,7 @@
 
 **服务地址**: https://tymoe.com  
 **部署平台**: 生产环境  
-**版本**: v0.2.11  
+**版本**: v2.0.0  
 
 ⚠️ **重要提醒**: 请勿直接修改数据库内容！所有数据操作必须通过API接口进行！
 
@@ -1046,7 +1046,7 @@ GET https://tymoe.com/
 - **数据库**: PostgreSQL (Oracle Cloud)
 - **缓存**: Redis
 - **邮件**: SMTP (mail.eazy.solutions)
-- **版本**: v0.2.11
+- **版本**: v2.0.0
 
 **内部服务Token验证:**
 ```http
@@ -1591,7 +1591,7 @@ INSERT INTO "User" (
 
 ### 🎯 设计理念
 
-Auth Service v0.2.11 采用**纯API模式**：
+Auth Service v2.0.0 采用**纯API模式**：
 
 - ✅ **前端控制UI**：登录页面、注册表单完全由前端实现
 - ✅ **RESTful API**：标准的HTTP请求/响应
@@ -2877,5 +2877,5 @@ curl https://tymoe.com/.well-known/openid-configuration
 ---
 
 **🌐 生产环境**: Oracle Cloud Infrastructure (40.233.69.38:80)  
-**📅 最后更新**: 2024年9月12日  
-**🔖 版本**: v0.2.11
+**📅 最后更新**: 2025年9月20日  
+**🔖 版本**: v2.0.0
