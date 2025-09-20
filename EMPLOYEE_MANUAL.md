@@ -18,9 +18,63 @@
 ### 基本信息
 - **服务地址**: https://tymoe.com
 - **管理后台**: 暂无 (通过API管理)
-- **数据库**: PostgreSQL
-- **缓存**: Redis
+- **数据库**: PostgreSQL (外部)
+- **缓存**: Redis (容器)
 - **监控**: Prometheus metrics
+
+### 系统架构
+
+#### 容器化部署架构
+
+系统采用 Docker Compose 多容器部署架构：
+
+```
+                Internet
+                    ↓
+               Nginx (容器)
+             端口: 80/443
+              ↓        ↓
+      反向代理         静态文件服务
+         ↓                ↓
+   Auth-Service      Frontend
+   端口: 8080        (HTML/CSS/JS)
+       ↓
+   Redis (容器)
+   端口: 6379
+   (缓存&会话)
+```
+
+#### 容器组件职责
+
+**Nginx 容器 (`tymoe-nginx`)**
+- SSL 证书管理 (Let's Encrypt)
+- 请求路由和负载均衡
+- 静态文件服务 (`./frontend/dist/`)
+- 安全防护和限流
+
+**Auth-Service 容器 (`auth-service-app`)**
+- Node.js 应用主体
+- OAuth2/OIDC 认证逻辑
+- API 接口服务
+- 业务逻辑处理
+
+**Redis 容器 (`tymoe-redis`)**
+- 会话数据存储
+- 验证码和临时数据
+- 限流计数器
+- 缓存服务
+
+**Frontend 容器 (`tymoe-frontend`)**
+- 静态前端资源
+- 用户界面 (登录/注册页面)
+- **注意**: 当前为预留容器，`./frontend/dist/` 目录为空
+
+#### 请求流向
+
+1. **API 请求**: `https://tymoe.com/api/*` → Nginx → Auth-Service
+2. **OIDC 端点**: `https://tymoe.com/.well-known/*` → Nginx → Auth-Service
+3. **静态文件**: `https://tymoe.com/*` → Nginx → Frontend dist 目录
+4. **健康检查**: `https://tymoe.com/healthz` → Nginx → Auth-Service
 
 ### 服务职责
 - 用户身份认证和授权
