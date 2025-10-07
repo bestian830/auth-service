@@ -85,20 +85,24 @@ enum OrgStatus {
 
 // Account表 - 操作账号
 model Account {
-  id             String        @id @default(uuid())
-  orgId          String
-  accountType    AccountType
-  productType    ProductType
-  username       String?       @unique
-  passwordHash   String?
-  employeeNumber String
-  pinCodeHash    String
-  name           String?
-  email          String?
-  phone          String?
-  createdBy      String
-  status         AccountStatus @default(ACTIVE)
-  lastLoginAt    DateTime?
+  id                 String        @id @default(uuid())
+  orgId              String
+  accountType        AccountType
+  productType        ProductType
+  username           String?       @unique
+  passwordHash       String?
+  employeeNumber     String
+  pinCodeHash        String
+  name               String?
+  email              String?
+  phone              String?
+  createdBy          String
+  status             AccountStatus @default(ACTIVE)
+  lastLoginAt        DateTime?
+  loginFailureCount  Int           @default(0)
+  lastLoginFailureAt DateTime?
+  lockedUntil        DateTime?
+  lockReason         String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
