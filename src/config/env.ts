@@ -96,5 +96,5 @@ export const env = {
   rateMaxLogin: Number(process.env.RATE_MAX_LOGIN_PER_HR ?? '10'),
   
   // JWT Token验证
-  allowedAudiences: process.env.ALLOWED_AUDIENCES ?? 'tymoe-service',
+  allowedAudiences: process.env.ALLOWED_AUDIENCES ?? 'tymoe-web,tymoe-service',
 } as const;

@@ -9,6 +9,8 @@ import oidcRoutes from './routes/oidc.js';
 import identityRoutes from './routes/identity.js';
 import adminRoutes from './routes/admin.js';
 import organizationRoutes from './routes/organizations.js';
+import accountRoutes from './routes/accounts.js';
+import deviceRoutes from './routes/devices.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
@@ -133,6 +135,8 @@ app.use(oidcRoutes);
 app.use(`${API_PREFIX}/identity`, identityRoutes);
 app.use(`${API_PREFIX}/admin`, adminRoutes);
 app.use(`${API_PREFIX}/organizations`, organizationRoutes);
+app.use(`${API_PREFIX}/accounts`, accountRoutes);
+app.use(`${API_PREFIX}/devices`, deviceRoutes);
 
 // 错误处理中间件 - 生产环境脱敏
 app.use((err: any, req: any, res: any, _next: any) => {

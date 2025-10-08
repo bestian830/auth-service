@@ -111,8 +111,10 @@ export class IdentityService {
     if (args.organizationName && args.organizationName.trim()) {
       await prisma.organization.create({
         data: {
-          name: args.organizationName.trim(),
-          ownerId: newUser.id,
+          userId: newUser.id,
+          orgName: args.organizationName.trim(),
+          orgType: 'MAIN' as any,
+          productType: 'beauty' as any,
           description: `${args.organizationName.trim()} organization`
         }
       });
@@ -124,391 +126,162 @@ export class IdentityService {
     return { user: newUser, created: true };
   }
 
-  // v0.2.7: short-lived encrypted code reuse
-  async issueEmailVerification(userId: string, purpose: string, sentTo: string) {
-    const now = new Date();
-    const reuseWindowStart = new Date(now.getTime() - env.verificationCodeReuseWindowSec * 1000);
-    
-    // Check for existing verification within 10-minute reuse window
-    const existingVerification = await prisma.emailVerification.findFirst({
+  async issueEmailVerification(userId: string, purpose: string, sentTo: string, resendCount: number = 0) {
+    // 生成6位数字验证码
+    const code = (Math.floor(Math.random() * 900000) + 100000).toString();
+    // 使用 bcrypt 哈希验证码 (salt rounds = 10)
+    const verificationCodeHash = await bcrypt.hash(code, 10);
+    // 密码重置10分钟过期,其他30分钟
+    const minutes = purpose === 'password_reset' ? 10 : 30;
+    const expiresAt = new Date(Date.now() + minutes * 60 * 1000);
+
+    await prisma.emailVerification.create({
+      data: {
+        userId,
+        verificationCodeHash,
+        purpose: purpose as any,
+        sentTo,
+        expiresAt,
+        consumedAt: null,
+        attempts: 0
+      }
+    });
+
+    const { subject, html} = (purpose === 'change_email' ? Templates.changeEmail : Templates.signupCode)({
+      brand: 'Tymoe',
+      email: sentTo,
+      selector: '',
+      token: code,
+      minutes
+    });
+    await this.mailer.send(sentTo, subject, html);
+
+    return { code };
+  }
+
+  /**
+   * 重新发送验证码 (文档1.3)
+   * @param userId - 用户ID
+   * @param email - 邮箱地址
+   * @param purpose - 验证目的
+   */
+  async resendVerificationCode(userId: string, email: string, purpose: string) {
+    // 查询最新的未消费验证记录
+    const latestVerification = await prisma.emailVerification.findFirst({
       where: {
         userId,
-        purpose,
-        sentTo,
-        consumedAt: null, // Not consumed
-        expiresAt: { gt: now }, // Not expired
-        reuseWindowExpiresAt: { gt: now }, // Still within reuse window
-        lastSentAt: { gte: reuseWindowStart }
+        purpose: purpose as any,
+        consumedAt: null
       },
       orderBy: { createdAt: 'desc' }
     });
 
-    let selector: string;
-    let token: string;
-    let willResend = true;
-    let reused = false;
+    const resendCount = latestVerification ? (latestVerification.attempts || 0) : 0;
 
-    if (existingVerification) {
-      // Reuse existing code - try to decrypt same verification code
-      selector = existingVerification.selector;
-      let code: string | null = null;
-      
-      if (existingVerification.tokenEnc && existingVerification.iv && existingVerification.tag && isEncKeyAvailable()) {
-        try {
-          code = decryptShortLived(existingVerification.tokenEnc, existingVerification.iv, existingVerification.tag);
-        } catch (err) {
-          // Decryption failed, can't reuse
-          console.warn('Failed to decrypt existing verification code:', err);
-        }
-      }
-      
-      if (code) {
-        token = code;
-        willResend = true;
-        
-        audit('verification_reuse_resend', {
-          userId,
-          selector: existingVerification.selector,
-          purpose,
-          sentTo,
-          resendCount: existingVerification.resendCount + 1
-        });
-      } else {
-        token = '******'; // Can't decrypt - show already sent
-        willResend = false;
-        
-        // 复用窗口内无法解密原码，仅返回 OK 不发信
-        audit('verification_reuse_nosend', {
-          userId,
-          selector: existingVerification.selector,
-          purpose,
-          sentTo,
-          resendCount: existingVerification.resendCount + 1
-        });
-      }
-      
-      // Update resend tracking
+    // 检查重发次数 (同一验证会话最多重发5次)
+    if (resendCount >= 5) {
+      throw new Error('resend_limit_exceeded');
+    }
+
+    // 标记旧验证码为过期
+    if (latestVerification) {
       await prisma.emailVerification.update({
-        where: { id: existingVerification.id },
-        data: {
-          resendCount: existingVerification.resendCount + 1,
-          lastSentAt: now
-        }
-      });
-      
-      reused = true;
-    } else {
-      // Generate new selector and 6-digit numeric token
-      selector = crypto.randomBytes(12).toString('hex');
-      // Generate 6-digit numeric code (100000-999999)
-      const numericCode = Math.floor(Math.random() * 900000) + 100000;
-      token = numericCode.toString();
-      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-      const expiresAt = new Date(Date.now() + env.signupCodeTtlSec * 1000);
-      const reuseWindowExpiresAt = new Date(Date.now() + env.verificationCodeReuseWindowSec * 1000);
-
-      // v0.2.7: encrypt token for reuse if key available
-      let encData: { enc: string; iv: string; tag: string } | null = null;
-      if (isEncKeyAvailable()) {
-        try {
-          encData = encryptShortLived(token);
-        } catch (err) {
-          console.warn('Failed to encrypt verification code:', err);
-        }
-      }
-
-      // Store in database
-      await prisma.emailVerification.create({
-        data: {
-          userId,
-          selector,
-          tokenHash,
-          purpose,
-          sentTo,
-          expiresAt,
-          reuseWindowExpiresAt,
-          lastSentAt: now,
-          resendCount: 0,
-          tokenEnc: encData?.enc || null,
-          iv: encData?.iv || null,
-          tag: encData?.tag || null
-        }
-      });
-      
-      audit('email_verification_created', {
-        userId,
-        selector,
-        purpose,
-        sentTo,
-        expiresAt: expiresAt.toISOString(),
-        reuseWindowExpiresAt: reuseWindowExpiresAt.toISOString(),
-        encrypted: !!encData
+        where: { id: latestVerification.id },
+        data: { expiresAt: new Date() }
       });
     }
 
-    // Send email if willing to resend
-    if (willResend) {
-      const template = purpose === 'change_email' 
-        ? Templates.changeEmail 
-        : Templates.signupCode;
-      
-      // Calculate actual remaining minutes from expiry time
-      let expiresAt: Date;
-      if (reused && existingVerification) {
-        expiresAt = existingVerification.expiresAt;
-      } else {
-        expiresAt = new Date(Date.now() + env.signupCodeTtlSec * 1000);
-      }
-      const remainingSec = Math.max(0, (expiresAt.getTime() - Date.now()) / 1000);
-      const remainingMinutes = Math.max(1, Math.ceil(remainingSec / 60));
-      
-      const { subject, html } = template({
-        brand: 'Tymoe',
-        email: sentTo,
-        selector,
-        token,
-        minutes: remainingMinutes
-      });
-
-      await this.mailer.send(sentTo, subject, html);
-    }
-
-    return { 
-      selector, 
-      token: willResend ? token : '******',
-      reused,
-      willResend,
-      reuseWindowSeconds: env.verificationCodeReuseWindowSec
-    };
+    // 生成新验证码
+    const result = await this.issueEmailVerification(userId, purpose, email, resendCount + 1);
+    
+    return result;
   }
 
-  async consumeEmailVerification(selector: string, token: string) {
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  async consumeEmailVerification(email: string, code: string) {
+    // 1. 通过 email 查找用户
+    const user = await prisma.user.findUnique({
+      where: { email }
+    });
 
-    const verification = await prisma.emailVerification.findUnique({
-      where: { selector },
-      include: { user: true }
+    if (!user) {
+      throw new Error('verification_not_found');
+    }
+
+    // 2. 查询最新的未消费验证记录
+    const verification = await prisma.emailVerification.findFirst({
+      where: {
+        userId: user.id,
+        purpose: 'signup',
+        consumedAt: null,
+        expiresAt: { gt: new Date() }
+      },
+      orderBy: { createdAt: 'desc' }
     });
 
     if (!verification) {
-      throw new Error('invalid_code');
+      throw new Error('verification_not_found');
     }
 
-    if (verification.consumedAt) {
-      throw new Error('code_already_used');
-    }
-
+    // 3. 检查过期
     if (verification.expiresAt < new Date()) {
       throw new Error('code_expired');
     }
 
-    if (verification.attempts >= env.codeAttemptMax) {
+    // 4. 检查尝试次数
+    if (verification.attempts >= 10) {
       throw new Error('too_many_attempts');
     }
 
-    if (verification.tokenHash !== tokenHash) {
-      // Increment attempts for invalid token
-      await prisma.emailVerification.update({
-        where: { id: verification.id },
-        data: { attempts: verification.attempts + 1 }
-      });
+    // 5. 使用 bcrypt 比对验证码
+    const isValid = await bcrypt.compare(code, verification.verificationCodeHash);
+    
+    if (!isValid) {
+      // Increment attempts for invalid code
+      await prisma.emailVerification.update({ where: { id: verification.id }, data: { attempts: verification.attempts + 1 } });
       throw new Error('invalid_code');
     }
 
-    // Mark as consumed and verify user email
+    // 6. 验证码匹配，更新记录
     await prisma.$transaction([
-      prisma.emailVerification.update({
-        where: { id: verification.id },
-        data: { consumedAt: new Date() }
+      prisma.emailVerification.update({ 
+        where: { id: verification.id }, 
+        data: { consumedAt: new Date() } 
       }),
       prisma.user.update({
-        where: { id: verification.userId },
+        where: { id: user.id },
         data: { emailVerifiedAt: new Date() }
       }),
-      // v0.2.7: 批量失效同类未使用的验证码（避免旧码误用）
-      prisma.emailVerification.updateMany({
-        where: { 
-          userId: verification.userId,
-          purpose: verification.purpose,
-          consumedAt: null,
-          id: { not: verification.id } // 排除当前已消费的
-        },
-        data: { 
-          consumedAt: new Date(),
-          attempts: 999, // 标记为已清理
-          tokenEnc: null, // 清除加密密文
-          iv: null,
-          tag: null
-        }
-      })
     ]);
 
-    audit('email_verification_batch_sweep', {
-      userId: verification.userId,
-      purpose: verification.purpose,
-      consumedSelector: verification.selector
-    });
-
-    return verification.user;
+    return user;
   }
 
-  // v0.2.7: short-lived encrypted code reuse  
   async issuePasswordReset(userId: string, sentTo: string) {
-    const now = new Date();
-    const reuseWindowStart = new Date(now.getTime() - env.verificationCodeReuseWindowSec * 1000);
-    
-    // Check for existing password reset within 10-minute reuse window
-    const existingReset = await prisma.passwordReset.findFirst({
-      where: {
+    const token = (Math.floor(Math.random() * 900000) + 100000).toString();
+    const verificationCodeHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + env.resetCodeTtlSec * 1000);
+
+    await prisma.emailVerification.create({
+      data: {
         userId,
+        verificationCodeHash,
+        purpose: 'password_reset',
         sentTo,
-        consumedAt: null, // Not consumed
-        expiresAt: { gt: now }, // Not expired
-        reuseWindowExpiresAt: { gt: now }, // Still within reuse window
-        lastSentAt: { gte: reuseWindowStart }
-      },
-      orderBy: { createdAt: 'desc' }
+        expiresAt,
+        consumedAt: null,
+      }
     });
 
-    let selector: string;
-    let token: string;
-    let willResend = true;
-    let reused = false;
-
-    if (existingReset) {
-      // Reuse existing code - try to decrypt same reset code
-      selector = existingReset.selector;
-      let code: string | null = null;
-      
-      if (existingReset.tokenEnc && existingReset.iv && existingReset.tag && isEncKeyAvailable()) {
-        try {
-          code = decryptShortLived(existingReset.tokenEnc, existingReset.iv, existingReset.tag);
-        } catch (err) {
-          console.warn('Failed to decrypt existing reset code:', err);
-        }
-      }
-      
-      if (code) {
-        token = code;
-        willResend = true;
-        
-        audit('verification_reuse_resend', {
-          userId,
-          selector: existingReset.selector,
-          purpose: 'password_reset',
-          sentTo,
-          resendCount: existingReset.resendCount + 1
-        });
-      } else {
-        token = '******';
-        willResend = false;
-        
-        // 复用窗口内无法解密原码，仅返回 OK 不发信
-        audit('verification_reuse_nosend', {
-          userId,
-          selector: existingReset.selector,
-          purpose: 'password_reset',
-          sentTo,
-          resendCount: existingReset.resendCount + 1
-        });
-      }
-      
-      // Update resend tracking
-      await prisma.passwordReset.update({
-        where: { id: existingReset.id },
-        data: {
-          resendCount: existingReset.resendCount + 1,
-          lastSentAt: now
-        }
-      });
-      
-      reused = true;
-    } else {
-      // Generate new selector and 6-digit numeric token
-      selector = crypto.randomBytes(12).toString('hex');
-      // Generate 6-digit numeric code (100000-999999)
-      const numericCode = Math.floor(Math.random() * 900000) + 100000;
-      token = numericCode.toString();
-      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-      const expiresAt = new Date(Date.now() + env.resetCodeTtlSec * 1000);
-      const reuseWindowExpiresAt = new Date(Date.now() + env.verificationCodeReuseWindowSec * 1000);
-
-      // v0.2.7: encrypt token for reuse if key available
-      let encData: { enc: string; iv: string; tag: string } | null = null;
-      if (isEncKeyAvailable()) {
-        try {
-          encData = encryptShortLived(token);
-        } catch (err) {
-          console.warn('Failed to encrypt reset code:', err);
-        }
-      }
-
-      // Store in database
-      await prisma.passwordReset.create({
-        data: {
-          userId,
-          selector,
-          tokenHash,
-          sentTo,
-          expiresAt,
-          reuseWindowExpiresAt,
-          lastSentAt: now,
-          resendCount: 0,
-          tokenEnc: encData?.enc || null,
-          iv: encData?.iv || null,
-          tag: encData?.tag || null
-        }
-      });
-      
-      audit('password_reset_created', {
-        userId,
-        selector,
-        sentTo,
-        expiresAt: expiresAt.toISOString(),
-        reuseWindowExpiresAt: reuseWindowExpiresAt.toISOString(),
-        encrypted: !!encData
-      });
-    }
-
-    // Send email if willing to resend
-    if (willResend) {
-      // Calculate actual remaining minutes from expiry time
-      let expiresAt: Date;
-      if (reused && existingReset) {
-        expiresAt = existingReset.expiresAt;
-      } else {
-        expiresAt = new Date(Date.now() + env.resetCodeTtlSec * 1000);
-      }
-      const remainingSec = Math.max(0, (expiresAt.getTime() - Date.now()) / 1000);
-      const remainingMinutes = Math.max(1, Math.ceil(remainingSec / 60));
-      
-      const { subject, html } = Templates.resetCode({
-        brand: 'Tymoe',
-        email: sentTo,
-        selector,
-        token,
-        minutes: remainingMinutes
-      });
-
-      await this.mailer.send(sentTo, subject, html);
-    }
-
-    return { 
-      selector, 
-      token: willResend ? token : '******',
-      reused,
-      willResend,
-      reuseWindowSeconds: env.verificationCodeReuseWindowSec
-    };
+    const { subject, html } = Templates.resetCode({ brand: 'Tymoe', email: sentTo, selector: '', token, minutes: Math.ceil(env.resetCodeTtlSec / 60) });
+    await this.mailer.send(sentTo, subject, html);
+    return { token };
   }
 
-  async consumePasswordReset(selector: string, token: string, newPassword: string) {
+  async consumePasswordReset(email: string, token: string, newPassword: string) {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-    const reset = await prisma.passwordReset.findUnique({
-      where: { selector },
+    const reset = await prisma.emailVerification.findFirst({
+      where: { sentTo: email, purpose: 'password_reset', consumedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
       include: { user: true }
     });
 
@@ -528,12 +301,9 @@ export class IdentityService {
       throw new Error('too_many_attempts');
     }
 
-    if (reset.tokenHash !== tokenHash) {
+    if (reset.verificationCodeHash !== tokenHash) {
       // Increment attempts for invalid token
-      await prisma.passwordReset.update({
-        where: { id: reset.id },
-        data: { attempts: reset.attempts + 1 }
-      });
+      await prisma.emailVerification.update({ where: { id: reset.id }, data: { attempts: reset.attempts + 1 } });
       throw new Error('invalid_code');
     }
 
@@ -542,35 +312,14 @@ export class IdentityService {
 
     // Mark reset as consumed, update password, and batch sweep other resets
     await prisma.$transaction([
-      prisma.passwordReset.update({
-        where: { id: reset.id },
-        data: { consumedAt: new Date() }
-      }),
+      prisma.emailVerification.update({ where: { id: reset.id }, data: { consumedAt: new Date() } }),
       prisma.user.update({
         where: { id: reset.userId },
         data: { passwordHash }
       }),
-      // v0.2.7: 批量失效同用户其他未使用的重置码（避免旧码误用）
-      prisma.passwordReset.updateMany({
-        where: { 
-          userId: reset.userId,
-          consumedAt: null,
-          id: { not: reset.id } // 排除当前已消费的
-        },
-        data: { 
-          consumedAt: new Date(),
-          attempts: 999, // 标记为已清理
-          tokenEnc: null, // 清除加密密文
-          iv: null,
-          tag: null
-        }
-      })
     ]);
 
-    audit('password_reset_batch_sweep', {
-      userId: reset.userId,
-      consumedSelector: reset.selector
-    });
+    audit('password_reset_consumed', { userId: reset.userId });
 
     // Revoke all refresh token families for this user
     await this.revokeAllUserTokens(reset.userId, 'password_reset');
