@@ -6,16 +6,24 @@ import { SignJWT, importPKCS8, JWTPayload } from 'jose';
 import { open } from '../infra/cryptoVault.js';
 
 export type AccessClaims = {
-  jti: string; 
-  iat: number; 
-  exp: number; 
+  jti: string;
+  iat: number;
+  exp: number;
   iss: string;
   aud: string | string[];
   sub: string;
-  roles: string[];
-  scopes: string[];
-  organizationId?: string | null;
-  deviceId?: string | null;
+  email?: string;  // User 登录时包含
+  userType: 'USER' | 'ACCOUNT';
+  productType?: string;  // 'beauty' | 'fb'
+  accountType?: 'OWNER' | 'MANAGER' | 'STAFF';
+  username?: string;  // Account 后台登录时包含
+  employeeNumber?: string;
+  organizationIds?: string[];  // User 登录时包含所有组织（数组）
+  permissions?: string[];  // 权限列表
+  roles?: string[];  // 角色列表（已废弃，保留向后兼容）
+  scopes?: string[];  // OAuth scopes（已废弃，保留向后兼容）
+  organizationId?: string | null;  // Account 登录时为单个组织 ID
+  deviceId?: string | null;  // POS 登录时包含
 };
 
 function nowSec() { 
@@ -39,24 +47,41 @@ async function getActivePrivateKey() {
 }
 
 export async function signAccessToken(payload: {
-  sub: string; 
-  roles?: string[]; 
+  sub: string;
+  email?: string;
+  userType: 'USER' | 'ACCOUNT';
+  productType?: string;
+  accountType?: 'OWNER' | 'MANAGER' | 'STAFF';
+  username?: string;
+  employeeNumber?: string;
+  organizationIds?: string[];
+  permissions?: string[];
+  roles?: string[];
   scopes?: string[];
-  organizationId?: string | null; 
-  deviceId?: string | null; 
+  organizationId?: string | null;
+  deviceId?: string | null; // POS 登录专用
   aud?: string | string[];
+  ttlSec?: number; // 可选：自定义有效期（秒），用于 POS 4.5 小时等场景
 }): Promise<string> {
   const iat = nowSec();
-  const exp = iat + Number(env.accessTtlSec || 1800);
+  const exp = iat + Number((payload.ttlSec ?? env.accessTtlSec) || 1800);
   const jti = crypto.randomUUID();
   const aud = resolveAudience(payload.aud, payload.organizationId || undefined);
 
   const claims: AccessClaims = {
     jti, iat, exp, iss: env.issuerUrl, aud,
     sub: payload.sub,
-    roles: payload.roles ?? [], 
-    scopes: payload.scopes ?? [],
-    organizationId: payload.organizationId ?? null, 
+    email: payload.email,
+    userType: payload.userType,
+    productType: payload.productType,
+    accountType: payload.accountType,
+    username: payload.username,
+    employeeNumber: payload.employeeNumber,
+    organizationIds: payload.organizationIds,
+    permissions: payload.permissions,
+    roles: payload.roles,
+    scopes: payload.scopes,
+    organizationId: payload.organizationId ?? null,
     deviceId: payload.deviceId ?? null,
   };
 
@@ -106,7 +131,8 @@ export async function signIdToken(payload: {
 // ===== Refresh Token Family =====
 
 export async function issueRefreshFamily(args: { 
-  userId?: string; 
+  userId?: string;
+  accountId?: string; // 新增
   deviceId?: string | null; 
   clientId: string; 
   organizationId?: string 
@@ -120,7 +146,8 @@ export async function issueRefreshFamily(args: {
       familyId, 
       clientId: args.clientId,
       subjectUserId: args.userId ?? null,
-      subjectDeviceId: args.deviceId ?? null,
+      subjectAccountId: args.accountId ?? null,
+      deviceId: args.deviceId ?? null,
       organizationId: args.organizationId ?? null,
       status: 'ACTIVE',
       createdAt: new Date(),
@@ -138,54 +165,33 @@ export async function rotateRefreshToken(oldId: string) {
     err.code = 'not_found';
     throw err;
   }
-  
+
   if (old.expiresAt && old.expiresAt < new Date()) {
     const err: any = new Error('invalid_refresh_token_expired');
     err.code = 'expired';
     throw err;
   }
-  
-  if (old.status === 'ROTATED') {
-    const err: any = new Error('invalid_refresh_token_reuse');
-    err.code = 'reuse';
-    throw err;
-  }
-  
+
   if (old.status !== 'ACTIVE') {
     const err: any = new Error('invalid_refresh_token_inactive');
     err.code = 'inactive';
     throw err;
   }
 
-  // 旋转：旧设为rotated，新发一个同familyId
-  await prisma.refreshToken.update({ 
-    where: { id: oldId }, 
-    data: { status: 'ROTATED', rotatedAt: new Date() } 
+  // Uber 模式：只更新 lastSeenAt，不生成新的 RT
+  await prisma.refreshToken.update({
+    where: { id: oldId },
+    data: { lastSeenAt: new Date() }
   });
-  
-  const newId = crypto.randomUUID();
-  await prisma.refreshToken.create({
-    data: {
-      id: newId, 
-      familyId: old.familyId, 
-      clientId: old.clientId,
-      subjectUserId: old.subjectUserId, 
-      subjectDeviceId: old.subjectDeviceId,
-      organizationId: old.organizationId,
-      status: 'ACTIVE',
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + Number(env.refreshTtlSec) * 1000)
-    }
-  });
-  
-  return { 
-    newId, 
-    subject: { userId: old.subjectUserId, deviceId: old.subjectDeviceId },
+
+  return {
+    refreshId: oldId,  // 返回相同的 RT
+    subject: { userId: old.subjectUserId, accountId: old.subjectAccountId, deviceId: old.deviceId },
     clientId: old.clientId,
     organizationId: old.organizationId,
-    lastSeenAt: old.lastSeenAt,
-    rotatedAt: new Date(),
-    createdAt: old.createdAt
+    lastSeenAt: new Date(),
+    createdAt: old.createdAt,
+    expiresAt: old.expiresAt
   };
 }
 
@@ -227,7 +233,7 @@ export async function revokeAllUserTokens(userId: string, reason: string): Promi
   });
 
   const uniqueFamilies: string[] = Array.from(
-    new Set(activeTokens.map(t => t.familyId).filter(Boolean))
+    new Set(activeTokens.map(t => t.familyId).filter((id): id is string => !!id))
   );
   
   if (uniqueFamilies.length === 0) {
@@ -265,7 +271,7 @@ export async function revokeUserTokensGlobally(userId: string, reason: string): 
   });
 
   const uniqueFamilies: string[] = Array.from(
-    new Set(activeTokens.map(t => t.familyId).filter(Boolean))
+    new Set(activeTokens.map(t => t.familyId).filter((id): id is string => !!id))
   );
   
   if (uniqueFamilies.length === 0) {

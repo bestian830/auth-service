@@ -84,6 +84,9 @@ export const env = {
   introspectClientSecret: process.env.INTROSPECT_CLIENT_SECRET ?? 'gateway-secret',
   internalServiceKey: process.env.INTERNAL_SERVICE_KEY ?? 'dev-internal-service-key',
 
+  // Admin API Keys 配置
+  adminApiKeys: process.env.ADMIN_API_KEYS ?? '',
+
   // Legacy support for backward compatibility
   loginMaxFailures: Number(process.env.LOGIN_MAX_FAILURES ?? process.env.LOGIN_LOCK_THRESHOLD ?? '10'),
   loginLockoutDurationSec: Number(process.env.LOGIN_LOCKOUT_DURATION_SEC ?? '1800'),

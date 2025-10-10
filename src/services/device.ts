@@ -83,7 +83,7 @@ export class DeviceService {
       where: {
         orgId,
         deviceName,
-        status: { not: 'DELETED' },
+        status: { notIn: ['DELETED'] },
       },
     });
     if (existingDevice) {
@@ -233,7 +233,7 @@ export class DeviceService {
         where: {
           orgId,
           deviceName: trimmedName,
-          status: { not: 'DELETED' },
+          status: { notIn: ['DELETED'] },
           id: { not: deviceId }, // 排除当前设备
         },
       });

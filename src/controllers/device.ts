@@ -366,7 +366,7 @@ export async function getDevice(req: Request, res: Response) {
     const device = await prisma.device.findFirst({
       where: {
         id: deviceId,
-        status: { not: 'DELETED' }
+        status: { notIn: ['DELETED'] }
       },
       include: { organization: true }
     });
@@ -377,7 +377,7 @@ export async function getDevice(req: Request, res: Response) {
 
     // 权限验证
     if (claims.userType === 'USER') {
-      if (device.organization.userId !== claims.sub) {
+      if (device.organization?.userId !== claims.sub) {
         return forbid(res);
       }
     } else if (claims.userType === 'ACCOUNT') {
@@ -401,7 +401,7 @@ export async function getDevice(req: Request, res: Response) {
       data: {
         id: device.id,
         orgId: device.orgId,
-        orgName: device.organization.orgName,
+        orgName: device.organization?.orgName || '',
         deviceType: device.deviceType,
         deviceName: device.deviceName,
         status: device.status,
@@ -436,7 +436,7 @@ export async function updateDevice(req: Request, res: Response) {
     const device = await prisma.device.findFirst({
       where: {
         id: deviceId,
-        status: { not: 'DELETED' }
+        status: { notIn: ['DELETED'] }
       },
       include: { organization: true }
     });
@@ -447,7 +447,7 @@ export async function updateDevice(req: Request, res: Response) {
 
     // 权限验证
     if (claims.userType === 'USER') {
-      if (device.organization.userId !== claims.sub) {
+      if (device.organization?.userId !== claims.sub) {
         return forbid(res);
       }
     } else if (claims.userType === 'ACCOUNT') {
@@ -505,7 +505,7 @@ export async function deleteDevice(req: Request, res: Response) {
     const device = await prisma.device.findFirst({
       where: {
         id: deviceId,
-        status: { not: 'DELETED' }
+        status: { notIn: ['DELETED'] }
       },
       include: { organization: true }
     });
@@ -515,7 +515,7 @@ export async function deleteDevice(req: Request, res: Response) {
     }
 
     // 验证权限
-    if (device.organization.userId !== claims.sub) {
+    if (device.organization?.userId !== claims.sub) {
       return forbid(res);
     }
 
