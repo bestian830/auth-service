@@ -3,68 +3,12 @@ import { Request, Response } from 'express';
 import { env } from '../config/env.js';
 import { buildJwksWithEtag, ensureOneActiveKey } from '../infra/keystore.js';
 import { prisma } from '../infra/prisma.js';
-import { issueRefreshFamily, rotateRefreshToken, revokeFamilyByOldReuse, signAccessToken, signIdToken } from '../../services/token.js';
-import { audit } from '../../middleware/audit.js';
-import { importJWK, jwtVerify } from 'jose';
-import * as crypto from 'crypto';
+import { issueRefreshFamily, rotateRefreshToken, signAccessToken } from '../services/token.js';
+import { audit } from '../middleware/audit.js';
 import * as bcrypt from 'bcryptjs';
-// import { deviceService } from '../services/device.js'; // Device服务已移到其他微服务
-import { jtiCache } from '../infra/redis.js';
-import { authenticateClient, validateGrantType } from '../../services/clientAuth.js';
-
-// ===== Discovery =====
-export async function discovery(_req: Request, res: Response){
-  const base = env.issuerUrl.replace(/\/+$/, '');
-  
-  // Dynamically determine supported auth methods based on existing clients
-  const clients = await prisma.client.findMany({
-    select: { 
-      type: true, 
-      authMethod: true 
-    }
-  });
-  
-  const authMethods = new Set<string>();
-  
-  // Add methods based on client types in database
-  for (const client of clients) {
-    if (client.type === 'PUBLIC') {
-      authMethods.add('none');
-    } else if (client.type === 'CONFIDENTIAL') {
-      if (client.authMethod === 'client_secret_basic') {
-        authMethods.add('client_secret_basic');
-      } else if (client.authMethod === 'client_secret_post') {
-        authMethods.add('client_secret_post');
-      }
-    }
-  }
-  
-  // Ensure at least 'none' is supported if no clients exist
-  if (authMethods.size === 0) {
-    authMethods.add('none');
-  }
-  
-  // Determine grant types based on client types
-  const grantTypes = new Set(['authorization_code', 'refresh_token']);
-  const hasConfidentialClients = clients.some((c: any) => c.type === 'CONFIDENTIAL');
-  if (hasConfidentialClients) {
-    grantTypes.add('client_credentials');
-  }
-
-  res.json({
-    issuer: base,
-    authorization_endpoint: `${base}/oauth/authorize`,
-    token_endpoint: `${base}/oauth/token`,
-    jwks_uri: `${base}/jwks.json`,
-    userinfo_endpoint: `${base}/userinfo`,
-    revocation_endpoint: `${base}/oauth/revoke`,
-    grant_types_supported: Array.from(grantTypes),
-    response_types_supported: ['code'],
-    id_token_signing_alg_values_supported: ['RS256'],
-    token_endpoint_auth_methods_supported: Array.from(authMethods),
-    code_challenge_methods_supported: ['S256']
-  });
-}
+import { jtiCache, isRedisConnected } from '../infra/redis.js';
+import { authenticateClient, validateGrantType } from '../services/clientAuth.js';
+import { accountService } from '../services/account.js';
 
 // ===== JWKS with ETag =====
 export async function jwks(req: Request, res: Response){
@@ -79,116 +23,6 @@ export async function jwks(req: Request, res: Response){
   return res.status(200)
     .set('Cache-Control', `public, max-age=${env.jwksMaxAgeSec}`)
     .set('ETag', etag).json(jwks);
-}
-
-// ===== 简化的登录与授权（保持与 R4 一致的行为） =====
-export async function getLogin(_req: Request, res: Response){
-  res.type('html').sendFile('login.html', { root: 'src/views' });
-}
-
-export async function postLogin(req: Request, res: Response){
-  const { email, password, return_to } = req.body;
-  audit('login_attempt', { email, ip: req.ip });
-  
-  const u = await prisma.user.findUnique({ where: { email }});
-  if (!u) {
-    audit('login_fail', { email, reason: 'user_not_found' });
-    return res.status(401).send('Invalid credentials');
-  }
-  
-  let passwordValid = false;
-  
-  // 优先使用 bcrypt hash 验证
-  if (u.passwordHash) {
-    passwordValid = await bcrypt.compare(password, u.passwordHash);
-  } 
-  // Legacy password support has been removed with the new schema
-  
-  if (!passwordValid) {
-    audit('login_fail', { email, reason: 'invalid_password' });
-    return res.status(401).send('Invalid credentials');
-  }
-  
-  // 写入轻量 session（假设你已有 session 中间件；若没有，用签名 cookie）
-  (req as any).session = { user: { id: u.id, email: u.email }};
-  audit('login_success', { email, userId: u.id });
-  
-  const redirect = return_to || '/';
-  return res.redirect(302, redirect);
-}
-
-export async function getAuthorize(req: Request, res: Response){
-  const u = (req as any).session?.user;
-  if (!u){
-    const return_to = encodeURIComponent(req.originalUrl);
-    return res.redirect(302, `/login?return_to=${return_to}`);
-  }
-
-  // Check if user's email is verified
-  const user = await prisma.user.findUnique({ where: { id: u.id } });
-  if (!user?.emailVerifiedAt) {
-    audit('authorize_unverified_email', { 
-      userId: u.id, 
-      email: u.email, 
-      ip: req.ip 
-    });
-    return res.status(400).send('<h1>Email Not Verified</h1><p>Please verify your email before accessing applications.</p>');
-  }
-
-  // 生成一次性授权码
-  const { client_id, redirect_uri, scope, state, code_challenge, code_challenge_method, nonce } = req.query as any;
-  if (!client_id || !redirect_uri || !code_challenge) return res.status(400).send('invalid_request');
-
-  // Check client exists and validate redirect URI whitelist
-  const client = await prisma.client.findUnique({ 
-    where: { id: client_id },
-    select: { redirectUris: true }
-  });
-  
-  if (!client) {
-    audit('authorize_invalid_client', { 
-      clientId: client_id, 
-      userId: u.id, 
-      ip: req.ip 
-    });
-    return res.status(400).send('invalid_client');
-  }
-
-  if (!client.redirectUris.includes(redirect_uri)) {
-    audit('authorize_invalid_redirect_uri', { 
-      clientId: client_id, 
-      redirectUri: redirect_uri,
-      allowedUris: client.redirectUris,
-      userId: u.id, 
-      ip: req.ip 
-    });
-    return res.status(400).send('invalid_redirect_uri');
-  }
-
-  const codeId = crypto.randomUUID();
-  await prisma.authorizationCode.create({
-    data: {
-      id: codeId,
-      clientId: client_id,
-      redirectUri: redirect_uri,
-      codeChallenge: code_challenge,
-      codeChallengeMethod: code_challenge_method || 'S256',
-      scope: (scope || '').toString(),
-      state: (state || '').toString(),
-      nonce: (nonce || '').toString(),
-      subjectUserId: u.id,
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 5*60*1000),
-      used: false
-    }
-  });
-  
-  audit('authorize', { clientId: client_id, userId: u.id, scope });
-  
-  const r = new URL(redirect_uri);
-  r.searchParams.set('code', codeId);
-  if (state) r.searchParams.set('state', state);
-  return res.redirect(302, r.toString());
 }
 
 // ===== Token Endpoint =====
@@ -215,150 +49,118 @@ export async function token(req: Request, res: Response){
     }
 
     if (grant_type === 'authorization_code'){
-      const { code, code_verifier, redirect_uri } = req.body;
-      if (!code || !code_verifier || !redirect_uri) {
-        return res.status(400).json({ error: 'invalid_request' });
-      }
-      const c = await prisma.authorizationCode.findUnique({ where: { id: code }});
-      if (!c || c.used || new Date(c.expiresAt) < new Date()){
-        return res.status(400).json({ error: 'invalid_grant' });
-      }
-
-      // ✅ 必修1：授权码绑定校验，防止换绑/窃用
-      if (c.clientId !== clientId || c.redirectUri !== redirect_uri) {
-        audit('token_denied', {
-          clientId, organizationId: c.organizationId, reason: 'code_binding_mismatch'
-        });
-        return res.status(400).json({ error: 'invalid_grant' });
-      }
-
-      // 校验 PKCE (S256)
-      const challenge = crypto.createHash('sha256').update(code_verifier).digest('base64')
-        .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-      if (c.codeChallengeMethod !== 'S256' || challenge !== c.codeChallenge){
-        return res.status(400).json({ error: 'invalid_grant' });
-      }
-      // Get user with organization info
-      const user = await prisma.user.findUnique({
-        where: { id: c.subjectUserId! },
-        include: {
-          ownedOrganizations: {
-            where: { status: 'ACTIVE' },
-            orderBy: { createdAt: 'asc' }
-          }
-        }
-      });
-      
-      if (!user) {
-        return res.status(400).json({ error: 'invalid_grant' });
-      }
-      
-      // Get first active organization (simplified approach)
-      const primaryOrg = user.ownedOrganizations[0];
-      const organizationId = primaryOrg?.id || undefined;
-      
-      const scopes = (c.scope || '').split(/\s+/).filter(Boolean);
-      
-      // 发 RT 家族
-      const { refreshId } = await issueRefreshFamily({ 
-        userId: c.subjectUserId!, 
-        clientId: clientId!, 
-        organizationId 
-      });
-
-      // AT 面向 API
-      const at = await signAccessToken({
-        sub: c.subjectUserId!, 
-        roles: primaryOrg ? ['OWNER'] : [], 
-        scopes, 
-        organizationId
-      });
-      
-      // ID Token 面向客户端
-      const idToken = await signIdToken({
-        sub: c.subjectUserId!, 
-        organizationId,
-        aud: clientId!, 
-        nonce: c.nonce || undefined
-      });
-
-      await prisma.authorizationCode.update({ where: { id: code }, data: { used: true, usedAt: new Date() }});
-      
-      audit('token_issue', { clientId: clientId!, userId: c.subjectUserId, grantType: grant_type });
-
-      return res.json({
-        access_token: at,
-        token_type: 'Bearer',
-        expires_in: Number(env.accessTtlSec),
-        refresh_token: refreshId,
-        id_token: idToken
-      });
+      return res.status(400).json({ error: 'unsupported_grant_type' });
     }
 
     if (grant_type === 'refresh_token'){
-      const { refresh_token, device_proof } = req.body;
+      const { refresh_token } = req.body;
       try{
         const rotated = await rotateRefreshToken(refresh_token);
-        
-        let deviceId: string | null = null;
 
-        // 设备验证功能已移到其他微服务，暂时禁用
-        // Optional device proof validation
-        // if (device_proof) {
-        //   deviceId validation logic...
-        // }
-        
-        // Get user and organization info
-        let organizationId: string | undefined = undefined;
-        let roles: string[] = [];
-        
+        // 根据 subject 类型重新生成完整的 access_token
+        let at: string;
+
+        // User 刷新
         if (rotated.subject.userId) {
-          const user = await prisma.user.findUnique({ 
+          const user = await prisma.user.findUnique({
             where: { id: rotated.subject.userId },
-            include: {
-              ownedOrganizations: {
-                where: { status: 'ACTIVE' },
-                orderBy: { createdAt: 'asc' }
-              }
+            select: { id: true, email: true }
+          });
+
+          if (!user) {
+            throw { code: 'user_not_found' };
+          }
+
+          // 推断 productType：从 rotated.organizationId 查询
+          let productType = 'beauty';  // 默认值
+          if (rotated.organizationId) {
+            const org = await prisma.organization.findUnique({
+              where: { id: rotated.organizationId },
+              select: { productType: true }
+            });
+            productType = org?.productType || 'beauty';
+          }
+
+          // 查询该用户在该 productType 下的最新组织列表
+          const orgs = await prisma.organization.findMany({
+            where: { userId: user.id, status: 'ACTIVE', productType: productType as any },
+            select: { id: true },
+            orderBy: { createdAt: 'asc' }
+          });
+          const organizationIds = orgs.map(o => o.id);
+
+          // User 后台登录的权限列表
+          const userPermissions = [
+            'read:all_orgs',
+            'manage:subscriptions',
+            'create:owner',
+            'create:manager',
+            'manage:accounts',
+            'manage:devices'
+          ];
+
+          at = await signAccessToken({
+            sub: user.id,
+            email: user.email,
+            userType: 'USER',
+            productType,
+            organizationIds,
+            permissions: userPermissions,
+            aud: clientId!,
+          });
+        }
+        // Account 刷新
+        else if (rotated.subject.accountId) {
+          const account = await prisma.account.findUnique({
+            where: { id: rotated.subject.accountId },
+            select: {
+              id: true,
+              accountType: true,
+              username: true,
+              employeeNumber: true,
+              productType: true,
+              orgId: true
             }
           });
-          
-          if (user && user.ownedOrganizations.length > 0) {
-            // Use primary organization (first created)
-            const primaryOrg = user.ownedOrganizations[0];
-            organizationId = primaryOrg.id;
-            roles = ['OWNER']; // User is owner of their organizations
+
+          if (!account) {
+            throw { code: 'account_not_found' };
           }
+
+          // Account 后台登录的权限根据角色确定
+          const accountPermissions =
+            account.accountType === 'OWNER' ? ['manage:org', 'manage:staff', 'manage:devices'] :
+            account.accountType === 'MANAGER' ? ['manage:org', 'manage:staff'] :
+            ['read:org'];
+
+          at = await signAccessToken({
+            sub: account.id,
+            userType: 'ACCOUNT',
+            accountType: account.accountType as any,
+            username: account.username || undefined,
+            employeeNumber: account.employeeNumber,
+            productType: account.productType as string,
+            organizationId: account.orgId,
+            permissions: accountPermissions,
+            aud: clientId!,
+          });
+        } else {
+          throw { code: 'invalid_subject' };
         }
-        
-        const at = await signAccessToken({
-          sub: (rotated.subject.userId ?? rotated.subject.deviceId)!,
-          roles,
-          scopes: [],
-          organizationId,
-          deviceId: deviceId ?? rotated.subject.deviceId ?? null
+
+        audit('token_refresh', {
+          refreshTokenId: refresh_token,
+          userId: rotated.subject.userId,
+          accountId: rotated.subject.accountId
         });
-        
-        audit('token_refresh', { 
-          refreshTokenId: refresh_token, 
-          newRefreshTokenId: rotated.newId, 
-          organizationId,
-          deviceId,
-          userId: rotated.subject.userId
-        });
-        
+
         return res.json({
           access_token: at,
+          refresh_token: rotated.refreshId,
           token_type: 'Bearer',
-          expires_in: Number(env.accessTtlSec),
-          refresh_token: rotated.newId
+          expires_in: Number(env.accessTtlSec)
         });
       }catch(e:any){
-        if (e?.code === 'reuse') {
-          await revokeFamilyByOldReuse(refresh_token);
-          audit('refresh_reuse', { refreshTokenId: refresh_token });
-          return res.status(401).json({ error: 'invalid_refresh_token' });
-        }
         if (['expired','inactive','not_found'].includes(e?.code)) {
           audit('token_refresh_failed', { refreshTokenId: refresh_token, reason: e.code });
           return res.status(401).json({ error: 'invalid_refresh_token' });
@@ -367,170 +169,319 @@ export async function token(req: Request, res: Response){
       }
     }
 
+    if (grant_type === 'password') {
+      const { email, username, pin_code, password } = req.body || {};
+      const productType = (req.headers['x-product-type'] || req.headers['X-Product-Type']) as string | undefined;
+      const deviceId = (req.headers['x-device-id'] || req.headers['X-Device-ID']) as string | undefined;
+
+      if (!productType || !['beauty', 'fb'].includes(productType)) {
+        return res.status(400).json({ error: 'invalid_request', error_description: 'X-Product-Type required' });
+      }
+
+      // Account POS 登录：pin_code + X-Device-ID（最优先判断，因为有明确的 pin_code 字段）
+      if (pin_code && deviceId && !email && !username && !password) {
+        const { account: acc, device } = await accountService.authenticatePOS(pin_code, deviceId, productType);
+
+        // POS 登录的权限（简化版，只有基本 POS 操作权限）
+        const posPermissions = ['use:pos'];
+
+        const at = await signAccessToken({
+          sub: acc.id,
+          userType: 'ACCOUNT',
+          accountType: acc.accountType as any,
+          employeeNumber: acc.employeeNumber,
+          productType,
+          organizationId: acc.orgId,
+          deviceId,
+          permissions: posPermissions,
+          aud: clientId!,
+          ttlSec: 16200, // 4.5 小时
+        });
+        audit('oauth_password_account_pos', { clientId, accountId: acc.id, deviceId: device.id });
+        return res.json({ access_token: at, token_type: 'Bearer', expires_in: 16200 });
+      }
+
+      // Account 后台登录：username + password (真正的 username，不是 email)
+      // 必须先判断 Account 登录，因为 username 字段会被 User 登录逻辑误认为是邮箱
+      if (username && password && !email && !pin_code && !username.includes('@')) {
+        // 验证 username 不能包含 @ 符号（防御性编程，虽然已经在 if 条件中检查）
+        if (username.includes('@')) {
+          return res.status(400).json({
+            error: 'invalid_username',
+            error_description: 'Username cannot contain @ symbol'
+          });
+        }
+
+        const acc = await accountService.authenticateBackend(username, password, productType);
+
+        // Account 后台登录的权限根据角色确定
+        const accountPermissions =
+          acc.accountType === 'OWNER' ? ['manage:org', 'manage:staff', 'manage:devices'] :
+          acc.accountType === 'MANAGER' ? ['manage:org', 'manage:staff'] :
+          ['read:org'];  // STAFF (但 STAFF 不应该能后台登录)
+
+        const at = await signAccessToken({
+          sub: acc.id,
+          userType: 'ACCOUNT',
+          accountType: acc.accountType as any,
+          username: acc.username!,
+          employeeNumber: acc.employeeNumber,
+          productType,
+          organizationId: acc.orgId,
+          permissions: accountPermissions,
+          aud: clientId!,
+        });
+        const { refreshId } = await issueRefreshFamily({ accountId: acc.id, clientId: clientId!, organizationId: acc.orgId });
+        audit('oauth_password_account_backend', { clientId, accountId: acc.id, username: acc.username });
+        return res.json({
+          access_token: at,
+          refresh_token: refreshId,
+          token_type: 'Bearer',
+          expires_in: Number(env.accessTtlSec)
+        });
+      }
+
+      // 用户（老板）后台登录：username(实际是email) + password
+      // 兼容 API 文档：支持 username 字段传邮箱，或 email 字段传邮箱
+      const userEmail = email || username;
+      if (userEmail && password && !pin_code) {
+        const user = await prisma.user.findUnique({ where: { email: userEmail } });
+        if (!user) return res.status(401).json({ error: 'invalid_grant' });
+        const ok = await bcrypt.compare(password, user.passwordHash);
+        if (!ok) return res.status(401).json({ error: 'invalid_grant' });
+        if (!user.emailVerifiedAt) return res.status(403).json({ error: 'email_not_verified' });
+
+        // 查询该用户在该 productType 下的所有组织 ID (符合 API 文档)
+        const orgs = await prisma.organization.findMany({
+          where: { userId: user.id, status: 'ACTIVE', productType: productType as any },
+          select: { id: true },
+          orderBy: { createdAt: 'asc' }
+        });
+        const organizationIds = orgs.map(o => o.id);
+        const primaryOrgId = organizationIds[0] || null;
+
+        // User 后台登录的权限列表
+        const userPermissions = [
+          'read:all_orgs',
+          'manage:subscriptions',
+          'create:owner',
+          'create:manager',
+          'manage:accounts',
+          'manage:devices'
+        ];
+
+        const at = await signAccessToken({
+          sub: user.id,
+          email: user.email,
+          userType: 'USER',
+          productType,
+          organizationIds,
+          permissions: userPermissions,
+          aud: clientId!,
+        });
+        const { refreshId } = await issueRefreshFamily({ userId: user.id, clientId: clientId!, organizationId: primaryOrgId ?? undefined });
+
+        audit('oauth_password_user_login', { clientId, userId: user.id, email: user.email });
+        return res.json({
+          access_token: at,
+          refresh_token: refreshId,
+          token_type: 'Bearer',
+          expires_in: Number(env.accessTtlSec)
+        });
+      }
+
+      return res.status(400).json({ error: 'invalid_request' });
+    }
+
     return res.status(400).json({ error: 'unsupported_grant_type' });
 
   }catch(e:any){
-    return res.status(500).json({ error: 'server_error', detail: e?.message });
+    return res.status(500).json({ error: 'server_error', detail: e?.message, requestId: res.locals.requestId });
   }
 }
 
 // ===== UserInfo =====
 export async function userinfo(req: Request, res: Response){
-  // 由 requireBearer 验证并注入的 claims
-  const claims = (req as any).claims || {};
-  const { sub, organizationId, roles, scopes = [], acr } = claims;
-
-  const s: string[] = Array.isArray(scopes) ? scopes : [];
-  if (!s.includes('openid')) {
-    return res.status(403).json({ error: 'insufficient_scope' });
-  }
-
-  res.json({
-    sub,
-    organizationId,
-    roles: roles ?? [],
-    scopes: s,
-    acr: acr ?? 'normal'
-  });
-}
-
-// ===== Revoke =====
-export async function revoke(req: Request, res: Response){
-  const { refresh_token } = req.body || {};
-  if (!refresh_token) return res.status(400).json({ error: 'invalid_request' });
-
-  // Basic Auth for client authentication (prevent DoS)
-  const auth = req.header('authorization') || '';
-  const m = auth.match(/^Basic\s+(.+)$/i);
-  if (!m) {
-    audit('revoke_no_auth', { refreshTokenId: refresh_token, ip: req.ip });
-    return res.status(401).json({ error: 'invalid_client' });
-  }
-  
-  const s = Buffer.from(m[1], 'base64').toString('utf8');
-  const [cid, secret] = s.split(':');
-  if (cid !== env.introspectClientId || secret !== env.introspectClientSecret){
-    audit('revoke_invalid_client', { clientId: cid, refreshTokenId: refresh_token, ip: req.ip });
-    return res.status(401).json({ error: 'invalid_client' });
-  }
-
-  // Check that the refresh token belongs to this client (prevent cross-client revocation)
-  const tokenRecord = await prisma.refreshToken.findUnique({
-    where: { id: refresh_token },
-    select: { clientId: true, familyId: true }
-  });
-
-  if (!tokenRecord) {
-    audit('revoke_token_not_found', { clientId: cid, refreshTokenId: refresh_token, ip: req.ip });
-    return res.json({ success: true }); // Return success even if token doesn't exist
-  }
-
-  if (tokenRecord.clientId !== cid) {
-    audit('revoke_client_mismatch', { 
-      clientId: cid, 
-      tokenClientId: tokenRecord.clientId,
-      refreshTokenId: refresh_token, 
-      ip: req.ip 
-    });
-    return res.status(403).json({ error: 'invalid_client' });
-  }
-
-  // Revoke the entire family
-  await prisma.refreshToken.updateMany({
-    where: { familyId: tokenRecord.familyId },
-    data: { status: 'REVOKED', revokedAt: new Date(), revokeReason: 'manual_revoke' }
-  });
-  
-  audit('revoke', { 
-    clientId: cid, 
-    refreshTokenId: refresh_token, 
-    familyId: tokenRecord.familyId,
-    ip: req.ip 
-  });
-  res.json({ success: true });
-}
-
-// ===== Introspect（要求 Basic Auth 并验证JWT）=====
-export async function introspect(req: Request, res: Response){
-  // 1) Client authentication（Basic Auth）
-  const auth = req.header('authorization') || '';
-  const m = auth.match(/^Basic\s+(.+)$/i);
-  if (!m) {
-    audit('introspect', { result: 'no_auth' });
-    return res.json({ active: false });
-  }
-  const s = Buffer.from(m[1], 'base64').toString('utf8');
-  const [cid, secret] = s.split(':');
-  if (cid !== env.introspectClientId || secret !== env.introspectClientSecret){
-    audit('introspect', { clientId: cid, result: 'invalid_client' });
-    return res.json({ active: false });
-  }
-
-  // 2) 获取要验证的token
-  const token = (req.body?.token as string) || '';
-  if (!token) {
-    audit('introspect', { clientId: cid, result: 'no_token' });
-    return res.json({ active: false });
-  }
-
   try {
-    // 3) 解析JWT header获取kid
-    const [headerB64] = token.split('.');
-    if (!headerB64) {
-      audit('introspect', { clientId: cid, result: 'invalid_token_format' });
-      return res.json({ active: false });
-    }
-    
-    const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString());
-    const kid = header.kid as string | undefined;
-    if (!kid) {
-      audit('introspect', { clientId: cid, result: 'no_kid' });
-      return res.json({ active: false });
+    // 由 requireBearer 验证并注入的 claims
+    const claims = (req as any).claims || {};
+    const { sub, userType } = claims;
+
+    if (!sub || !userType) {
+      return res.status(401).json({
+        error: 'invalid_token',
+        detail: 'Token is invalid or expired'
+      });
     }
 
-    // 4) 根据kid查找公钥
-    const keyRecord = await prisma.key.findUnique({ 
-      where: { kid },
-      select: { publicJwk: true, status: true }
-    });
-    
-    if (!keyRecord || keyRecord.status === 'RETIRED') {
-      audit('introspect', { clientId: cid, kid, result: 'key_not_found_or_retired' });
-      return res.json({ active: false });
+    // User 类型
+    if (userType === 'USER') {
+      const user = await prisma.user.findUnique({
+        where: { id: sub },
+        select: {
+          email: true,
+          name: true,
+          phone: true,
+          emailVerifiedAt: true,
+          createdAt: true,
+        }
+      });
+
+      if (!user) {
+        return res.status(404).json({
+          error: 'user_not_found',
+          detail: 'User or account not found'
+        });
+      }
+
+      // 查询该用户的所有组织（从 token 中的 productType 获取）
+      const productType = claims.productType || 'beauty';
+      const organizations = await prisma.organization.findMany({
+        where: {
+          userId: sub,
+          status: 'ACTIVE',
+          productType: productType as any
+        },
+        select: {
+          id: true,
+          orgName: true,
+          orgType: true
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      return res.json({
+        success: true,
+        userType: 'USER',
+        data: {
+          email: user.email,
+          name: user.name,
+          phone: user.phone,
+          productType,
+          emailVerified: !!user.emailVerifiedAt,
+          createdAt: user.createdAt,
+          organizations: organizations.map(org => ({
+            id: org.id,
+            orgName: org.orgName,
+            orgType: org.orgType
+          }))
+        }
+      });
     }
 
-    // 5) 使用jose验证JWT
-    const publicKey = await importJWK(keyRecord.publicJwk as any, 'RS256');
-    const { payload: decoded } = await jwtVerify(token, publicKey, { 
-      algorithms: ['RS256'],
-      clockTolerance: 30  // ✅ 30 秒时钟容错
-    });
+    // Account 类型
+    if (userType === 'ACCOUNT') {
+      const account = await prisma.account.findUnique({
+        where: { id: sub },
+        select: {
+          username: true,
+          employeeNumber: true,
+          accountType: true,
+          productType: true,
+          name: true,
+          email: true,
+          phone: true,
+          lastLoginAt: true,
+          createdAt: true,
+          orgId: true,
+          organization: {
+            select: {
+              id: true,
+              orgName: true,
+              orgType: true
+            }
+          }
+        }
+      });
 
-    // 6) 返回RFC 7662标准格式的响应
-    audit('introspect', { clientId: cid, kid, sub: decoded.sub, result: 'active' });
-    return res.json({
-      active: true,
-      iss: decoded.iss,
-      sub: decoded.sub,
-      aud: decoded.aud,
-      iat: decoded.iat,
-      exp: decoded.exp,
-      jti: decoded.jti,
-      scope: Array.isArray((decoded as any).scopes) ? (decoded as any).scopes.join(' ') : undefined,
-      organizationId: (decoded as any).organizationId,
-      acr: (decoded as any).acr
+      if (!account) {
+        return res.status(404).json({
+          error: 'user_not_found',
+          detail: 'User or account not found'
+        });
+      }
+
+      return res.json({
+        success: true,
+        userType: 'ACCOUNT',
+        data: {
+          username: account.username,
+          employeeNumber: account.employeeNumber,
+          accountType: account.accountType,
+          productType: account.productType,
+          name: account.name,
+          email: account.email,
+          phone: account.phone,
+          lastLoginAt: account.lastLoginAt,
+          createdAt: account.createdAt,
+          organization: {
+            id: account.organization.id,
+            orgName: account.organization.orgName,
+            orgType: account.organization.orgType
+          }
+        }
+      });
+    }
+
+    return res.status(400).json({
+      error: 'invalid_token',
+      detail: 'Invalid userType in token'
     });
 
   } catch (error: any) {
-    // JWT验证失败（过期、签名错误等）
-    audit('introspect', { clientId: cid, result: 'token_invalid', error: error instanceof Error ? error.message : String(error) });
-    return res.json({ active: false });
+    return res.status(500).json({ error: 'server_error', detail: error?.message });
   }
 }
 
-// ===== Logout =====
-export async function logout(req: Request, res: Response){
-  (req as any).session = null;
-  audit('logout', { ip: req.ip });
-  res.redirect('/');
+// ===== Check Token Blacklist (Internal Service) =====
+export async function checkBlacklist(req: Request, res: Response){
+  try {
+    // 1. 验证内部服务密钥
+    const serviceKey = req.header('x-internal-service-key') || req.header('X-Internal-Service-Key');
+    if (!serviceKey || serviceKey !== env.internalServiceKey) {
+      audit('blacklist_check_invalid_key', { ip: req.ip, providedKey: serviceKey?.substring(0, 10) });
+      return res.status(403).json({
+        error: 'invalid_service_key',
+        detail: 'Invalid internal service key'
+      });
+    }
+
+    // 2. 获取 jti
+    const { jti } = req.body || {};
+    if (!jti) {
+      return res.status(400).json({
+        error: 'missing_jti',
+        detail: 'jti is required'
+      });
+    }
+
+    // 3. 检查 Redis 黑名单
+    if (!isRedisConnected()) {
+      // Redis 未连接，假设不在黑名单中（降级处理）
+      return res.json({
+        success: true,
+        blacklisted: false
+      });
+    }
+
+    const blacklisted = await jtiCache.isBlacklisted(jti);
+    const reason = blacklisted ? await jtiCache.getBlacklistReason(jti) : null;
+
+    audit('blacklist_check', {
+      jti: jti.substring(0, 10),
+      blacklisted,
+      reason,
+      ip: req.ip
+    });
+
+    return res.json({
+      success: true,
+      blacklisted,
+      ...(reason ? { reason } : {})
+    });
+
+  } catch (error: any) {
+    audit('blacklist_check_error', { error: error.message, ip: req.ip });
+    return res.status(500).json({ error: 'server_error', detail: error?.message });
+  }
 }

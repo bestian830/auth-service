@@ -107,12 +107,10 @@ model Account {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization    Organization   @relation(fields: [orgId], references: [id])
-  createdAccounts Account[]      @relation("AccountCreator")
-  creator         Account?       @relation("AccountCreator", fields: [createdBy], references: [id])
-  loginAttempts   LoginAttempt[]
-  refreshTokens   RefreshToken[]
-  auditLogs       AuditLog[]
+  organization  Organization   @relation(fields: [orgId], references: [id])
+  loginAttempts LoginAttempt[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
 
   @@unique([orgId, employeeNumber, status], name: "unique_active_employee")
   @@index([orgId])
@@ -143,8 +141,6 @@ model Device {
   status            DeviceStatus @default(PENDING)
   activatedAt       DateTime?
   lastActiveAt      DateTime?
-  expiresAt         DateTime?
-  dormantSince      DateTime?
   deviceFingerprint Json?
 
   createdAt DateTime @default(now())
@@ -167,7 +163,7 @@ enum DeviceType {
 enum DeviceStatus {
   PENDING
   ACTIVE
-  DORMANT
+  DELETED
 }
 
 // EmailVerification表 - 邮箱验证

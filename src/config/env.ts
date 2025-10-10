@@ -82,7 +82,8 @@ export const env = {
   // Client 认证配置（用于内部服务调用）
   introspectClientId: process.env.INTROSPECT_CLIENT_ID ?? 'gateway',
   introspectClientSecret: process.env.INTROSPECT_CLIENT_SECRET ?? 'gateway-secret',
-  
+  internalServiceKey: process.env.INTERNAL_SERVICE_KEY ?? 'dev-internal-service-key',
+
   // Legacy support for backward compatibility
   loginMaxFailures: Number(process.env.LOGIN_MAX_FAILURES ?? process.env.LOGIN_LOCK_THRESHOLD ?? '10'),
   loginLockoutDurationSec: Number(process.env.LOGIN_LOCKOUT_DURATION_SEC ?? '1800'),

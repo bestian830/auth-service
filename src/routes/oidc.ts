@@ -1,20 +1,20 @@
 import { Router } from 'express';
-import { discovery, jwks, token, revoke, userinfo, introspect } from '../controllers/oidc.js';
+import { jwks, token, userinfo, checkBlacklist } from '../controllers/oidc.js';
 import { requireBearer } from '../middleware/bearer.js';
 import { limitToken } from '../middleware/rate.js';
 
 const r = Router();
 
-// 标准OIDC端点（第三方集成可能需要）
-r.get('/.well-known/openid-configuration', discovery);
+// 5.1 获取 JWT 公钥 (JWKS)
 r.get('/jwks.json', jwks);
 
-// Token管理（仅API模式）
+// OAuth Token 端点 (已在第一、三部分实现)
 r.post('/oauth/token', limitToken, token);
-r.post('/oauth/revoke', limitToken, revoke);
-r.post('/oauth/introspect', limitToken, introspect);
 
-// 用户信息
+// 5.2 获取当前用户信息
 r.get('/userinfo', requireBearer, userinfo);
+
+// 5.3 检查 Token 黑名单（内部服务专用）
+r.post('/api/auth-service/v1/internal/token/check-blacklist', checkBlacklist);
 
 export default r;

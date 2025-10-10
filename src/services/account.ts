@@ -45,13 +45,15 @@ export class AccountService {
    * @returns 验证结果
    */
   validateEmployeeNumber(employeeNumber: string): { valid: boolean; error?: string } {
-    if (!employeeNumber || employeeNumber.length < 4 || employeeNumber.length > 8) {
-      return { valid: false, error: 'invalid_employee_number' };
+    if (!employeeNumber || employeeNumber.trim().length === 0) {
+      return { valid: false, error: 'employee_number_required' };
     }
 
-    // 检查字符类型：仅字母和数字（使用 i 标志忽略大小写）
-    if (!/^[a-z0-9]+$/i.test(employeeNumber)) {
-      return { valid: false, error: 'employee_number_invalid_characters' };
+    // 支持 UTF-8 字符（包括中文、英文、数字等）
+    // 长度限制：1-50 个字符
+    const trimmed = employeeNumber.trim();
+    if (trimmed.length < 1 || trimmed.length > 50) {
+      return { valid: false, error: 'employee_number_length_invalid' };
     }
 
     return { valid: true };
@@ -118,6 +120,11 @@ export class AccountService {
         throw new Error('username_password_required');
       }
 
+      // 验证username不能包含@符号
+      if (request.username.includes('@')) {
+        throw new Error('username_cannot_contain_at_symbol');
+      }
+
       // 检查username唯一性（全局唯一，仅ACTIVE状态）
       const existingUsername = await prisma.account.findFirst({
         where: {
@@ -149,10 +156,35 @@ export class AccountService {
       throw new Error('employee_number_exists_in_org');
     }
 
+    // 6.5. 检查PIN码在组织内唯一（仅ACTIVE状态）
+    // 需要查询该组织所有ACTIVE账号，逐一比对pinCode hash
+    const activeAccounts = await prisma.account.findMany({
+      where: {
+        orgId: request.orgId,
+        status: 'ACTIVE',
+      },
+      select: {
+        id: true,
+        pinCodeHash: true,
+      },
+    });
+
+    for (const acc of activeAccounts) {
+      const isMatch = await bcrypt.compare(request.pinCode, acc.pinCodeHash);
+      if (isMatch) {
+        throw new Error('pinCode_already_exists');
+      }
+    }
+
     // 7. Hash密码和PIN码
-    const passwordHash = request.password
-      ? await bcrypt.hash(request.password, env.passwordHashRounds)
-      : null;
+    // STAFF 类型不需要 username 和 password，即使提供了也忽略（防止浪费全局唯一的 username 资源）
+    let passwordHash = null;
+    let username = null;
+
+    if (['OWNER', 'MANAGER'].includes(request.accountType)) {
+      passwordHash = await bcrypt.hash(request.password!, env.passwordHashRounds);
+      username = request.username!;
+    }
 
     const pinCodeHash = await bcrypt.hash(request.pinCode, env.passwordHashRounds);
 
@@ -162,7 +194,7 @@ export class AccountService {
         orgId: request.orgId,
         accountType: request.accountType,
         productType: request.productType as any,
-        username: request.username || null,
+        username,
         passwordHash,
         employeeNumber: request.employeeNumber,
         pinCodeHash,
@@ -180,7 +212,7 @@ export class AccountService {
       orgId: request.orgId,
       accountType: request.accountType,
       employeeNumber: request.employeeNumber,
-      hasUsername: !!request.username,
+      hasUsername: !!account.username,  // 使用实际存储的值（STAFF 会是 false）
       createdBy: request.createdBy,
       creatorType,
     });
@@ -270,16 +302,14 @@ export class AccountService {
   }
 
   /**
-   * POS登录认证（employeeNumber + pinCode + deviceId）
+   * POS登录认证（pinCode + deviceId）
    * 适用所有类型的Account
-   * @param employeeNumber - 员工号
    * @param pinCode - PIN码
    * @param deviceId - 设备ID
    * @param productType - 产品类型
    * @returns 账号和设备信息
    */
   async authenticatePOS(
-    employeeNumber: string,
     pinCode: string,
     deviceId: string,
     productType: string
@@ -301,15 +331,23 @@ export class AccountService {
       throw new Error('device_not_active');
     }
 
-    // 2. 查询Account（在设备所属组织内）
-    const account = await prisma.account.findFirst({
+    // 2. 查询该组织下所有ACTIVE账号，逐一验证PIN码
+    const accounts = await prisma.account.findMany({
       where: {
         orgId: device.orgId,
-        employeeNumber,
         productType: productType as any,
         status: 'ACTIVE',
       },
     });
+
+    let account: Account | null = null;
+    for (const acc of accounts) {
+      const isValid = await bcrypt.compare(pinCode, acc.pinCodeHash);
+      if (isValid) {
+        account = acc;
+        break;
+      }
+    }
 
     if (!account) {
       throw new Error('invalid_credentials');
@@ -335,22 +373,15 @@ export class AccountService {
       throw new Error('account_locked');
     }
 
-    // 4. 验证PIN码
-    const isValid = await bcrypt.compare(pinCode, account.pinCodeHash);
-    if (!isValid) {
-      await this.incrementLoginFailure(account.id);
-      throw new Error('invalid_pin_code');
-    }
-
-    // 5. 检查组织状态
+    // 4. 检查组织状态
     if (device.organization.status !== 'ACTIVE') {
       throw new Error('organization_inactive');
     }
 
-    // 6. 登录成功后更新登录状态（重置失败计数并清锁）
+    // 5. 登录成功后更新登录状态（重置失败计数并清锁）
     await this.updateLastLogin(account.id);
 
-    // 7. 返回账号和设备信息
+    // 6. 返回账号和设备信息
     return { account, device };
   }
 
