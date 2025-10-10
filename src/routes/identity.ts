@@ -1,15 +1,17 @@
 import { Router } from 'express';
-import { 
-  register, 
-  verify, 
-  login, 
+import {
+  register,
+  verify,
+  resend,
+  login,
   logout,
-  forgotPassword, 
-  resetPassword, 
+  forgotPassword,
+  resetPassword,
+  changePassword,
   getProfile,
   updateProfile,
-  changePassword,
-  captchaStatus
+  changeEmail,
+  verifyEmailChange
 } from '../controllers/identity.js';
 import { requireBearer } from '../middleware/bearer.js';
 import { createRateLimiter } from '../middleware/rate.js';
@@ -20,7 +22,6 @@ import {
   dualVerificationRateLimit,
   markSuccessfulRequest
 } from '../middleware/redisRate.js';
-import { conditionalCaptcha } from '../middleware/captcha.js';
 import { env } from '../config/env.js';
 
 const router = Router();
@@ -46,26 +47,47 @@ const loginLimiter = createRateLimiter({
 
 // Identity management endpoints
 
-// CAPTCHA status check (before login form)
-router.get('/captcha-status', captchaStatus);
+// 移除 CAPTCHA 相关端点
 
 // Registration and verification (enhanced with dual rate limiting)
+// 第一部分：User 用户管理模块 (14个端点，严格对齐 API端点设计文档.md)
+
+// 1.1 用户注册
 router.post('/register', dualRegistrationRateLimit, markSuccessfulRequest, register);
-router.post('/verify', dualVerificationRateLimit, markSuccessfulRequest, verify);
 
-// Authentication (enhanced with CAPTCHA and dual rate limiting)  
-router.post('/login', dualLoginRateLimit, conditionalCaptcha(), markSuccessfulRequest, login);
-router.post('/logout', logout);
+// 1.2 邮箱验证
+router.post('/verification', dualVerificationRateLimit, markSuccessfulRequest, verify);
 
-// Password reset (enhanced with dual rate limiting)
+// 1.3 重新发送验证码
+router.post('/resend', resend);
+
+// 1.4 用户登录 (不返回token,只返回用户信息和组织列表)
+router.post('/login', dualLoginRateLimit, markSuccessfulRequest, login);
+
+// 1.5 & 1.6 获取 OAuth Token & 刷新 Token (在 /oauth/token 端点，由 oidc.ts 处理)
+
+// 1.7 用户登出
+router.post('/logout', requireBearer, logout);
+
+// 1.8 忘记密码
 router.post('/forgot-password', dualPasswordResetRateLimit, markSuccessfulRequest, forgotPassword);
+
+// 1.9 重置密码
 router.post('/reset-password', resetPassword);
 
-// Profile management (requires authentication)
-router.get('/me', requireBearer, getProfile);
-router.patch('/me', requireBearer, updateProfile);
-
-// Password change (requires authentication)
+// 1.10 修改密码 (已登录)
 router.post('/change-password', requireBearer, changePassword);
+
+// 1.11 获取当前用户信息
+router.get('/profile', requireBearer, getProfile);
+
+// 1.12 更新用户信息
+router.patch('/profile', requireBearer, updateProfile);
+
+// 1.13 修改邮箱 (第1步: 请求验证码)
+router.post('/change-email', requireBearer, changeEmail);
+
+// 1.14 修改邮箱 (第2步: 确认验证码)
+router.post('/verification-email-change', requireBearer, verifyEmailChange);
 
 export default router;

@@ -9,10 +9,12 @@ import oidcRoutes from './routes/oidc.js';
 import identityRoutes from './routes/identity.js';
 import adminRoutes from './routes/admin.js';
 import organizationRoutes from './routes/organizations.js';
+import accountRoutes from './routes/accounts.js';
+import deviceRoutes from './routes/devices.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
-import { metricsAuth } from '../src/middleware/metricsAuth.js';
+import { metricsAuth } from './middleware/metricsAuth.js';
 
 // 创建 logger
 export const logger = pino({
@@ -107,17 +109,18 @@ app.get('/', (_req, res) => {
     description: 'Tymoe Authentication and Authorization Service',
     apiVersion: 'v1',
     endpoints: {
-      // OIDC标准端点
-      discovery: '/.well-known/openid-configuration',
+      // OAuth/OIDC端点
       jwks: '/jwks.json',
       token: '/oauth/token',
       userinfo: '/userinfo',
-      introspect: '/oauth/introspect',
-      revoke: '/oauth/revoke',
       // 业务API端点
       identity: `${API_PREFIX}/identity`,
       admin: `${API_PREFIX}/admin`,
       organizations: `${API_PREFIX}/organizations`,
+      accounts: `${API_PREFIX}/accounts`,
+      devices: `${API_PREFIX}/devices`,
+      // 内部服务端点
+      tokenBlacklist: `${API_PREFIX}/internal/token/check-blacklist`,
       // 系统端点
       health: '/healthz',
       metrics: '/metrics'
@@ -133,6 +136,8 @@ app.use(oidcRoutes);
 app.use(`${API_PREFIX}/identity`, identityRoutes);
 app.use(`${API_PREFIX}/admin`, adminRoutes);
 app.use(`${API_PREFIX}/organizations`, organizationRoutes);
+app.use(`${API_PREFIX}/accounts`, accountRoutes);
+app.use(`${API_PREFIX}/devices`, deviceRoutes);
 
 // 错误处理中间件 - 生产环境脱敏
 app.use((err: any, req: any, res: any, _next: any) => {
@@ -161,7 +166,7 @@ async function startServer() {
     console.log('✅ JWT signing keys ready');
       
     // 验证邮件配置
-    const { testEmailConfiguration } = await import('../src/services/mailer.js');
+    const { testEmailConfiguration } = await import('./services/mailer.js');
     const emailTest = await testEmailConfiguration();
     
     if (emailTest.success) {

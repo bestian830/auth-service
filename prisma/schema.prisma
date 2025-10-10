@@ -7,165 +7,269 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ===== 核心身份管理模型 =====
+// ==============================
+// 核心业务表
+// ==============================
 
+// User表 - User账号(老板账号)
 model User {
-  id                         String   @id @default(uuid())
-  email                      String   @unique
-  passwordHash               String
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  passwordHash       String
+  name               String?
+  phone              String?
+  emailVerifiedAt    DateTime?
+  loginFailureCount  Int       @default(0)
+  lastLoginFailureAt DateTime?
+  lockedUntil        DateTime?
+  lockReason         String?
 
-  // 基本信息（Auth-service职责范围）
-  name                       String?
-  phone                      String?  @db.VarChar(32)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // 账号状态
-  emailVerifiedAt            DateTime?
-  createdAt                  DateTime @default(now())
-  updatedAt                  DateTime @updatedAt
+  organizations      Organization[]
+  emailVerifications EmailVerification[]
+  loginAttempts      LoginAttempt[]
+  refreshTokens      RefreshToken[]
+  auditLogs          AuditLog[]
 
-  // 安全相关
-  loginFailureCount          Int      @default(0)
-  lastLoginFailureAt         DateTime?
-  lockedUntil                DateTime?
-  lockReason                 String?  // "max_failures" | "security_violation"
-
-  // 关系（简化，移除复杂的业务关系）
-  emailVerifications         EmailVerification[]
-  passwordResets             PasswordReset[]
-  loginAttempts              LoginAttempt[]
-  ownedOrganizations         Organization[] @relation("OrganizationOwner")
+  @@index([email])
 }
 
-// AccountType枚举已删除 - 只有老板能注册，不需要区分账号类型
-
+// Organization表 - 店铺
 model Organization {
-  id                String   @id @default(uuid())
-  name              String
-  ownerId           String   // 创建者/老板
+  id          String      @id @default(uuid())
+  userId      String
+  parentOrgId String?
+  orgName     String
+  orgType     OrgType
+  productType ProductType
+  description String?     @db.Text
+  location    String?
+  phone       String?
+  email       String?
+  status      OrgStatus   @default(ACTIVE)
 
-  // 基本信息（Auth-service职责范围）
-  description       String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // 联系信息（支持多店铺不同联系方式）
-  location          String?  // 店铺地址
-  phone             String?  @db.VarChar(32) // 店铺电话
-  email             String?  @db.VarChar(255) // 店铺邮箱
+  user     User           @relation(fields: [userId], references: [id])
+  parent   Organization?  @relation("OrgHierarchy", fields: [parentOrgId], references: [id])
+  children Organization[] @relation("OrgHierarchy")
+  accounts Account[]
+  devices  Device[]
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  // 状态（简化）
-  status            OrganizationStatus @default(ACTIVE)
-
-  // 关系（支持一个老板多个店铺）
-  owner             User       @relation("OrganizationOwner", fields: [ownerId], references: [id])
-
-  @@index([ownerId])
+  @@index([userId])
+  @@index([parentOrgId])
+  @@index([orgType])
+  @@index([productType])
   @@index([status])
 }
 
-enum OrganizationStatus {
+enum OrgType {
+  MAIN
+  BRANCH
+  FRANCHISE
+}
+
+enum ProductType {
+  beauty
+  fb
+}
+
+enum OrgStatus {
   ACTIVE
   SUSPENDED
   DELETED
 }
 
-// UserRole移到Employee-Service中管理
-// 这里只保留auth-service需要的核心模型
+// Account表 - 操作账号
+model Account {
+  id                 String        @id @default(uuid())
+  orgId              String
+  accountType        AccountType
+  productType        ProductType
+  username           String?       @unique
+  passwordHash       String?
+  employeeNumber     String
+  pinCodeHash        String
+  name               String?
+  email              String?
+  phone              String?
+  createdBy          String
+  status             AccountStatus @default(ACTIVE)
+  lastLoginAt        DateTime?
+  loginFailureCount  Int           @default(0)
+  lastLoginFailureAt DateTime?
+  lockedUntil        DateTime?
+  lockReason         String?
 
-// Device模型移到Device-Service中管理
-// Auth-service只负责OAuth2客户端的基础认证
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-// ===== OAuth2/OIDC 相关模型 =====
+  organization  Organization   @relation(fields: [orgId], references: [id])
+  loginAttempts LoginAttempt[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
 
-model Client {
-  id           String   @id @default(cuid())
-  clientId     String   @unique
-  name         String?
-  type         ClientType @default(PUBLIC)
-  secretHash   String?
-  authMethod   TokenEndpointAuthMethod @default(none)
-  redirectUris String[]
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  @@unique([orgId, employeeNumber, status], name: "unique_active_employee")
+  @@index([orgId])
+  @@index([username])
+  @@index([status])
+  @@index([accountType])
 }
 
-enum ClientType {
-  PUBLIC
-  CONFIDENTIAL
+enum AccountType {
+  OWNER
+  MANAGER
+  STAFF
 }
 
-enum TokenEndpointAuthMethod {
-  none
-  client_secret_basic
-  client_secret_post
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
 }
 
-model AuthorizationCode {
-  id                   String   @id @default(uuid())
-  clientId             String
-  redirectUri          String
-  codeChallenge        String
-  codeChallengeMethod  String   @default("S256")
-  scope                String?
-  state                String?
-  nonce                String?
+// Device表 - 设备管理
+model Device {
+  id                String       @id @default(uuid())
+  orgId             String
+  deviceType        DeviceType
+  deviceName        String?
+  activationCode    String       @unique
+  status            DeviceStatus @default(PENDING)
+  activatedAt       DateTime?
+  lastActiveAt      DateTime?
+  deviceFingerprint Json?
 
-  // 主体信息
-  subjectUserId        String?
-  subjectDeviceId      String?
-  organizationId       String?  // 上下文组织
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // 生命周期
-  createdAt            DateTime @default(now())
+  organization Organization @relation(fields: [orgId], references: [id])
+  auditLogs    AuditLog[]
+
+  @@index([orgId])
+  @@index([status])
+  @@index([activationCode])
+}
+
+enum DeviceType {
+  POS
+  KIOSK
+  TABLET
+}
+
+enum DeviceStatus {
+  PENDING
+  ACTIVE
+  DELETED
+}
+
+// EmailVerification表 - 邮箱验证
+model EmailVerification {
+  id                   String                 @id @default(uuid())
+  userId               String
+  verificationCodeHash String
+  purpose              VerificationPurpose
+  sentTo               String
   expiresAt            DateTime
-  used                 Boolean  @default(false)
-  usedAt               DateTime?
+  consumedAt           DateTime?
+  attempts             Int                    @default(0)
 
-  @@index([clientId])
-  @@index([subjectUserId])
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
   @@index([expiresAt])
 }
 
-model RefreshToken {
-  id               String   @id
-  familyId         String
-  subjectUserId    String?
-  subjectDeviceId  String?
-  clientId         String
-  organizationId   String?  // 令牌关联的组织
+enum VerificationPurpose {
+  signup
+  email_change
+  password_reset
+}
 
-  status           RefreshTokenStatus @default(ACTIVE)
-  createdAt        DateTime @default(now())
-  expiresAt        DateTime
-  rotatedAt        DateTime?
-  revokedAt        DateTime?
-  revokeReason     String?
-  lastSeenAt       DateTime @default(now())
+// LoginAttempt表 - 登录记录
+model LoginAttempt {
+  id                String    @id @default(uuid())
+  loginType         LoginType
+  userId            String?
+  accountId         String?
+  loginIdentifier   String
+  organizationId    String?
+  ipAddress         String
+  userAgent         String?   @db.Text
+  deviceFingerprint String?
+  success           Boolean
+  failureReason     String?
+
+  attemptAt DateTime @default(now())
+
+  user    User?    @relation(fields: [userId], references: [id])
+  account Account? @relation(fields: [accountId], references: [id])
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([loginIdentifier])
+  @@index([ipAddress])
+  @@index([attemptAt])
+  @@index([success])
+}
+
+enum LoginType {
+  USER
+  ACCOUNT
+}
+
+// RefreshToken表 - 刷新令牌
+model RefreshToken {
+  id               String      @id
+  familyId         String?
+  subjectUserId    String?
+  subjectAccountId String?
+  clientId         String
+  organizationId   String?
+  deviceId         String?
+  deviceInfo       String?     @db.Text
+  status           TokenStatus @default(ACTIVE)
+
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  rotatedAt    DateTime?
+  revokedAt    DateTime?
+  revokeReason String?
+  lastSeenAt   DateTime  @default(now())
+
+  user    User?    @relation(fields: [subjectUserId], references: [id])
+  account Account? @relation(fields: [subjectAccountId], references: [id])
 
   @@index([familyId])
   @@index([subjectUserId])
+  @@index([subjectAccountId])
+  @@index([deviceId])
   @@index([status])
   @@index([lastSeenAt])
 }
 
-enum RefreshTokenStatus {
+enum TokenStatus {
   ACTIVE
   ROTATED
   REVOKED
 }
 
-// ===== 密钥管理 =====
-
+// Key表 - JWT签名密钥
 model Key {
-  kid          String   @id
-  type         String   // 'RSA'
-  status       KeyStatus
-  privatePem   String   // 加密存储的私钥
-  publicJwk    Json
-  createdAt    DateTime @default(now())
-  activatedAt  DateTime?
-  retiredAt    DateTime?
+  kid        String    @id
+  type       String
+  status     KeyStatus @default(ACTIVE)
+  privatePem String    @db.Text
+  publicJwk  Json
+
+  createdAt   DateTime  @default(now())
+  activatedAt DateTime?
+  retiredAt   DateTime?
 
   @@index([status])
 }
@@ -176,97 +280,24 @@ enum KeyStatus {
   RETIRED
 }
 
-// ===== 身份验证相关 =====
-
-model EmailVerification {
-  id          String   @id @default(uuid())
-  userId      String
-  selector    String   @unique
-  tokenHash   String
-  purpose     String   // "signup" | "email_change"
-  sentTo      String
-  expiresAt   DateTime
-  consumedAt  DateTime?
-  attempts    Int      @default(0)
-  createdAt   DateTime @default(now())
-
-  // 重发控制
-  reuseWindowExpiresAt DateTime?
-  lastSentAt           DateTime @default(now())
-  resendCount          Int      @default(0)
-
-  // 高级加密（可选，暂未启用）
-  tokenEnc    String?  // AES加密的验证码（比tokenHash更安全）
-  iv          String?  // 加密初始向量
-  tag         String?  // 认证标签
-
-  user        User     @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([expiresAt])
-}
-
-model PasswordReset {
-  id          String   @id @default(uuid())
-  userId      String
-  selector    String   @unique
-  tokenHash   String
-  sentTo      String
-  expiresAt   DateTime
-  consumedAt  DateTime?
-  attempts    Int      @default(0)
-  createdAt   DateTime @default(now())
-
-  // 重发控制
-  reuseWindowExpiresAt DateTime?
-  lastSentAt           DateTime @default(now())
-  resendCount          Int      @default(0)
-
-  // 高级加密（可选，暂未启用）
-  tokenEnc    String?  // AES加密的验证码（比tokenHash更安全）
-  iv          String?  // 加密初始向量
-  tag         String?  // 认证标签
-
-  user        User     @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([expiresAt])
-}
-
-model LoginAttempt {
-  id             String   @id @default(uuid())
-  userId         String?
-  email          String
-  organizationId String?  // 登录上下文组织
-  ipAddress      String
-  userAgent      String?
-  success        Boolean
-  failureReason  String?
-  captchaUsed    Boolean  @default(false)
-  attemptAt      DateTime @default(now())
-
-  user           User?    @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([email])
-  @@index([ipAddress])
-  @@index([attemptAt])
-  @@index([success])
-}
-
-// ===== 审计日志 =====
-
+// AuditLog表 - 审计日志
 model AuditLog {
-  id          String   @id @default(uuid())
-  at          DateTime @default(now())
-  ip          String?
-  userAgent   String?
-  actorUserId String?
-  action      String
-  subject     String?
-  detail      Json?
+  id             String   @id @default(uuid())
+  at             DateTime @default(now())
+  ip             String?
+  userAgent      String?  @db.Text
+  actorUserId    String?
+  actorAccountId String?
+  action         String
+  subject        String?
+  detail         Json?
+
+  user    User?    @relation(fields: [actorUserId], references: [id])
+  account Account? @relation(fields: [actorAccountId], references: [id])
+  device  Device?  @relation(fields: [subject], references: [id])
 
   @@index([actorUserId])
+  @@index([actorAccountId])
   @@index([action])
   @@index([at])
 }

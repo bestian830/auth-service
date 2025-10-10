@@ -208,12 +208,29 @@ export class JTICache {
   async cleanup(): Promise<number> {
     const pattern = `${env.redisNamespace}:${this.keyPrefix}:*`;
     const keys = await this.redis.keys(pattern);
-    
+
     if (keys.length === 0) {
       return 0;
     }
-    
+
     return await this.redis.del(...keys);
+  }
+
+  // Token blacklist methods
+  async isBlacklisted(jti: string): Promise<boolean> {
+    const key = `${env.redisNamespace}:token:blacklist:${jti}`;
+    const result = await this.redis.exists(key);
+    return result === 1;
+  }
+
+  async getBlacklistReason(jti: string): Promise<string | null> {
+    const key = `${env.redisNamespace}:token:blacklist:${jti}`;
+    return await this.redis.get(key);
+  }
+
+  async addToBlacklist(jti: string, reason: string, ttlSeconds: number): Promise<void> {
+    const key = `${env.redisNamespace}:token:blacklist:${jti}`;
+    await this.redis.setex(key, ttlSeconds, reason);
   }
 }
 

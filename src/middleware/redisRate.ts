@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { createRateLimiter, isRedisConnected } from '../src/infra/redis.js';
+import { createRateLimiter, isRedisConnected } from '../infra/redis.js';
 import { env } from '../config/env.js';
 import { audit } from './audit.js';
 
@@ -9,7 +9,6 @@ interface DualRateLimitOptions {
   ipMax: number;
   ipWindowSec: number;
   keyPrefix?: string;
-  skipSuccessfulRequests?: boolean;
 }
 
 export function createDualRateLimiter(options: DualRateLimitOptions) {
@@ -26,10 +25,7 @@ export function createDualRateLimiter(options: DualRateLimitOptions) {
       const email = req.body?.email || 'unknown';
       const route = options.keyPrefix || 'dual_rate';
 
-      // Skip if this is a successful request and option is enabled
-      if (options.skipSuccessfulRequests && res.locals.skipRateLimit) {
-        return next();
-      }
+      // 简化策略：不再跳过成功请求，统一计数
 
       // 使用统一的键命名规范：service:auth:rl:<route>:<dimension>:<value>
       const emailHash = Buffer.from(email).toString('base64').slice(0, 12); // 简化邮箱显示
@@ -109,8 +105,7 @@ export const dualLoginRateLimit = createDualRateLimiter({
   emailWindowSec: 3600, // 1 hour
   ipMax: env.rateMaxLogin * 5, // Allow more per IP for shared networks
   ipWindowSec: 3600, // 1 hour
-  keyPrefix: 'login',
-  skipSuccessfulRequests: true // Only count failed attempts
+  keyPrefix: 'login'
 });
 
 // Enhanced rate limiting for registration (using new hourly config)

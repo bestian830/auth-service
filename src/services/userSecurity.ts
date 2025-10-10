@@ -216,11 +216,7 @@ export class UserSecurityService {
           success: false,
           attemptAt: { gte: windowStart }
         },
-        select: {
-          ipAddress: true,
-          email: true,
-          attemptAt: true
-        },
+        select: { ipAddress: true, loginIdentifier: true, attemptAt: true },
         orderBy: { attemptAt: 'desc' }
       });
 
@@ -235,7 +231,7 @@ export class UserSecurityService {
         const existing = ipMap.get(attempt.ipAddress);
         if (existing) {
           existing.count++;
-          existing.emails.add(attempt.email);
+          existing.emails.add(attempt.loginIdentifier);
           if (attempt.attemptAt > existing.lastFailure) {
             existing.lastFailure = attempt.attemptAt;
           }
@@ -243,7 +239,7 @@ export class UserSecurityService {
           ipMap.set(attempt.ipAddress, {
             count: 1,
             lastFailure: attempt.attemptAt,
-            emails: new Set([attempt.email])
+            emails: new Set([attempt.loginIdentifier])
           });
         }
       }

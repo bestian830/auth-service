@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { importJWK, jwtVerify } from 'jose';
-import { prisma } from '../src/infra/prisma.js';
+import { prisma } from '../infra/prisma.js';
 import { env } from '../config/env.js';
+import { getRedisClient, isRedisConnected } from '../infra/redis.js';
 
 export async function requireBearer(req: Request, res: Response, next: NextFunction) {
   const auth = req.headers.authorization || '';
@@ -41,17 +42,33 @@ export async function requireBearer(req: Request, res: Response, next: NextFunct
       clockTolerance: 30                          // 30 秒时钟容错
     });
 
-    // 手动校验audience前缀（避免误杀）
-    const aud = claims.aud;
-    if (aud && !Array.isArray(aud) && typeof aud === 'string') {
-      const allowedPrefixes = env.allowedAudiences.split(',').map(s => s.trim()).filter(Boolean);
-      const hasValidPrefix = allowedPrefixes.some(prefix => aud.startsWith(prefix));
-      
-      if (!hasValidPrefix) {
-        return res.status(401).json({ error: 'invalid_audience' });
+    // 手动校验audience（宽松模式，只要有 aud 就行）
+    // 不强制校验 audience 前缀，允许所有 client_id
+    // const aud = claims.aud;
+    // if (aud && !Array.isArray(aud) && typeof aud === 'string') {
+    //   const allowedPrefixes = env.allowedAudiences.split(',').map(s => s.trim()).filter(Boolean);
+    //   const hasValidPrefix = allowedPrefixes.some(prefix => aud.startsWith(prefix));
+    //
+    //   if (!hasValidPrefix) {
+    //     return res.status(401).json({ error: 'invalid_audience' });
+    //   }
+    // }
+
+    // 检查 JTI 黑名单
+    const jti = claims.jti as string | undefined;
+    if (jti && isRedisConnected()) {
+      try {
+        const redis = await getRedisClient();
+        const blacklisted = await redis.get(`token:blacklist:${jti}`);
+        if (blacklisted) {
+          return res.status(401).json({ error: 'token_revoked' });
+        }
+      } catch (redisError) {
+        console.error('Redis blacklist check error:', redisError);
+        // Redis 错误时不阻止请求，继续执行
       }
     }
-    
+
     (req as any).claims = claims;
     next();
 

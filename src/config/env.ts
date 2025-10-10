@@ -82,7 +82,11 @@ export const env = {
   // Client 认证配置（用于内部服务调用）
   introspectClientId: process.env.INTROSPECT_CLIENT_ID ?? 'gateway',
   introspectClientSecret: process.env.INTROSPECT_CLIENT_SECRET ?? 'gateway-secret',
-  
+  internalServiceKey: process.env.INTERNAL_SERVICE_KEY ?? 'dev-internal-service-key',
+
+  // Admin API Keys 配置
+  adminApiKeys: process.env.ADMIN_API_KEYS ?? '',
+
   // Legacy support for backward compatibility
   loginMaxFailures: Number(process.env.LOGIN_MAX_FAILURES ?? process.env.LOGIN_LOCK_THRESHOLD ?? '10'),
   loginLockoutDurationSec: Number(process.env.LOGIN_LOCKOUT_DURATION_SEC ?? '1800'),
@@ -96,5 +100,5 @@ export const env = {
   rateMaxLogin: Number(process.env.RATE_MAX_LOGIN_PER_HR ?? '10'),
   
   // JWT Token验证
-  allowedAudiences: process.env.ALLOWED_AUDIENCES ?? 'tymoe-service',
+  allowedAudiences: process.env.ALLOWED_AUDIENCES ?? 'tymoe-web,tymoe-service',
 } as const;
