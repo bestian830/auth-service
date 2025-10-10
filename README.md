@@ -234,7 +234,7 @@ curl -X GET http://localhost:8080/api/auth-service/v1/admin/health \
 |------|------|------|------|
 | 4.1 | POST | `/devices` | 创建设备（生成激活码） |
 | 4.2 | POST | `/devices/activate` | 激活设备 |
-| 4.3 | POST | `/devices/:deviceId/update-activation-code` | 更新激活码 |
+| 4.3 | POST | `/devices/:deviceId/update-activation-code` | 更新设备激活码 |
 | 4.4 | GET | `/devices` | 获取组织的所有设备 |
 | 4.5 | GET | `/devices/:deviceId` | 获取单个设备详情 |
 | 4.6 | PATCH | `/devices/:deviceId` | 更新设备信息 |
@@ -245,7 +245,7 @@ curl -X GET http://localhost:8080/api/auth-service/v1/admin/health \
 | 端点 | 方法 | 路径 | 说明 |
 |------|------|------|------|
 | 5.1 | GET | `/jwks.json` | 获取 JWT 公钥 (JWKS) |
-| 5.2 | GET | `/userinfo` | 获取用户信息 (OIDC UserInfo) |
+| 5.2 | GET | `/userinfo` | 获取用户信息 |
 | 5.3 | POST | `/internal/token/check-blacklist` | 检查 Token 黑名单（内部服务用） |
 
 ### 第六部分: 管理 API (Admin API) - 11个端点
