@@ -81,9 +81,9 @@ export async function token(req: Request, res: Response){
             productType = org?.productType || 'beauty';
           }
 
-          // 查询该用户在该 productType 下的最新组织列表
+          // 查询该用户的所有最新组织列表（不按productType筛选，返回所有）
           const orgs = await prisma.organization.findMany({
-            where: { userId: user.id, status: 'ACTIVE', productType: productType as any },
+            where: { userId: user.id, status: 'ACTIVE' },
             select: { id: true },
             orderBy: { createdAt: 'asc' }
           });
@@ -118,8 +118,12 @@ export async function token(req: Request, res: Response){
               accountType: true,
               username: true,
               employeeNumber: true,
-              productType: true,
-              orgId: true
+              orgId: true,
+              organization: {
+                select: {
+                  productType: true
+                }
+              }
             }
           });
 
@@ -139,7 +143,7 @@ export async function token(req: Request, res: Response){
             accountType: account.accountType as any,
             username: account.username || undefined,
             employeeNumber: account.employeeNumber,
-            productType: account.productType as string,
+            productType: account.organization.productType as string,
             organizationId: account.orgId,
             permissions: accountPermissions,
             aud: clientId!,
@@ -171,19 +175,15 @@ export async function token(req: Request, res: Response){
 
     if (grant_type === 'password') {
       const { email, username, pin_code, password } = req.body || {};
-      const productType = (req.headers['x-product-type'] || req.headers['X-Product-Type']) as string | undefined;
       const deviceId = (req.headers['x-device-id'] || req.headers['X-Device-ID']) as string | undefined;
-
-      if (!productType || !['beauty', 'fb'].includes(productType)) {
-        return res.status(400).json({ error: 'invalid_request', error_description: 'X-Product-Type required' });
-      }
 
       // Account POS 登录：pin_code + X-Device-ID（最优先判断，因为有明确的 pin_code 字段）
       if (pin_code && deviceId && !email && !username && !password) {
-        const { account: acc, device } = await accountService.authenticatePOS(pin_code, deviceId, productType);
+        const { account: acc, device } = await accountService.authenticatePOS(pin_code, deviceId);
 
         // POS 登录的权限（简化版，只有基本 POS 操作权限）
         const posPermissions = ['use:pos'];
+        const productType = device.organization.productType;
 
         const at = await signAccessToken({
           sub: acc.id,
@@ -212,13 +212,15 @@ export async function token(req: Request, res: Response){
           });
         }
 
-        const acc = await accountService.authenticateBackend(username, password, productType);
+        const acc = await accountService.authenticateBackend(username, password);
 
         // Account 后台登录的权限根据角色确定
         const accountPermissions =
           acc.accountType === 'OWNER' ? ['manage:org', 'manage:staff', 'manage:devices'] :
           acc.accountType === 'MANAGER' ? ['manage:org', 'manage:staff'] :
           ['read:org'];  // STAFF (但 STAFF 不应该能后台登录)
+
+        const productType = acc.organization.productType;
 
         const at = await signAccessToken({
           sub: acc.id,
@@ -251,14 +253,17 @@ export async function token(req: Request, res: Response){
         if (!ok) return res.status(401).json({ error: 'invalid_grant' });
         if (!user.emailVerifiedAt) return res.status(403).json({ error: 'email_not_verified' });
 
-        // 查询该用户在该 productType 下的所有组织 ID (符合 API 文档)
+        // 查询该用户的所有组织 ID（不按productType筛选，返回所有）
         const orgs = await prisma.organization.findMany({
-          where: { userId: user.id, status: 'ACTIVE', productType: productType as any },
-          select: { id: true },
+          where: { userId: user.id, status: 'ACTIVE' },
+          select: { id: true, productType: true },
           orderBy: { createdAt: 'asc' }
         });
         const organizationIds = orgs.map(o => o.id);
         const primaryOrgId = organizationIds[0] || null;
+
+        // 从第一个组织获取productType作为默认值
+        const productType = orgs[0]?.productType || 'beauty';
 
         // User 后台登录的权限列表
         const userPermissions = [
@@ -377,7 +382,6 @@ export async function userinfo(req: Request, res: Response){
           username: true,
           employeeNumber: true,
           accountType: true,
-          productType: true,
           name: true,
           email: true,
           phone: true,
@@ -388,7 +392,8 @@ export async function userinfo(req: Request, res: Response){
             select: {
               id: true,
               orgName: true,
-              orgType: true
+              orgType: true,
+              productType: true
             }
           }
         }
@@ -408,7 +413,7 @@ export async function userinfo(req: Request, res: Response){
           username: account.username,
           employeeNumber: account.employeeNumber,
           accountType: account.accountType,
-          productType: account.productType,
+          productType: account.organization.productType,
           name: account.name,
           email: account.email,
           phone: account.phone,

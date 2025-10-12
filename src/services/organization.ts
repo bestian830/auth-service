@@ -5,7 +5,7 @@ import { audit } from '../middleware/audit.js';
 export interface CreateOrganizationRequest {
   userId: string; // 所有者(老板)
   orgName: string;
-  productType: 'beauty' | 'fb';
+  productType: string; // 支持所有新的 ProductType enum 值
   orgType: 'MAIN' | 'BRANCH' | 'FRANCHISE';
   parentOrgId?: string; // MAIN 必须为空；BRANCH/FRANCHISE 必须提供 MAIN 父组织
   description?: string;
@@ -22,7 +22,7 @@ export class OrganizationService {
    */
   async validateParentOrg(params: {
     userId: string;
-    productType: 'beauty' | 'fb';
+    productType: string;
     orgType: 'MAIN' | 'BRANCH' | 'FRANCHISE';
     parentOrgId?: string;
   }): Promise<{ ok: boolean; error?: string }> {
@@ -39,7 +39,7 @@ export class OrganizationService {
         id: parentOrgId,
         userId,
         orgType: 'MAIN',
-        productType,
+        productType: productType as any,
         status: 'ACTIVE',
       },
       select: { id: true },
@@ -97,7 +97,7 @@ export class OrganizationService {
   /**
    * 获取用户拥有的组织列表(按 productType 过滤)
    */
-  async getUserOrganizations(userId: string, productType?: 'beauty' | 'fb') {
+  async getUserOrganizations(userId: string, productType?: string) {
     const organizations = await prisma.organization.findMany({
       where: {
         userId,

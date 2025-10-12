@@ -128,7 +128,6 @@ export class DeviceService {
   async activateDevice(
     deviceId: string,
     activationCode: string,
-    productType: string,
     deviceFingerprint?: any
   ): Promise<Device> {
     // 1. 校验设备与激活码匹配
@@ -146,19 +145,14 @@ export class DeviceService {
       throw new Error('org_inactive');
     }
 
-    // 3. 验证productType
-    if (device.organization.productType !== productType) {
-      throw new Error('product_type_mismatch');
-    }
-
-    // 4. 状态校验
+    // 3. 状态校验
     if (device.status !== 'PENDING') {
       throw new Error('device_already_activated');
     }
 
     const now = new Date();
 
-    // 5. 更新为 ACTIVE（长期有效，除非被手动删除）
+    // 4. 更新为 ACTIVE（长期有效，除非被手动删除）
     const updated = await prisma.device.update({
       where: { id: device.id },
       data: {
@@ -169,7 +163,7 @@ export class DeviceService {
       },
     });
 
-    // 6. 审计
+    // 5. 审计
     audit('device_activated', {
       deviceId: device.id,
       orgId: device.orgId,

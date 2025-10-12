@@ -18,12 +18,6 @@ function forbid(res: Response) {
   return res.status(403).json({ error: 'insufficient_permissions' });
 }
 
-function getProductType(req: Request): 'beauty' | 'fb' | undefined {
-  const pt = (req.headers['x-product-type'] || req.headers['X-Product-Type']) as string | undefined;
-  if (pt === 'beauty' || pt === 'fb') return pt;
-  return undefined;
-}
-
 // 4.1 创建设备（生成激活码） - 仅 USER
 export async function createDevice(req: Request, res: Response) {
   try {
@@ -115,7 +109,6 @@ export async function createDevice(req: Request, res: Response) {
 // 4.2 激活设备 - 无需认证
 export async function activateDevice(req: Request, res: Response) {
   try {
-    const productType = getProductType(req);
     const deviceFingerprint = req.headers['x-device-fingerprint'] || req.headers['X-Device-Fingerprint'];
     const { deviceId, activationCode } = req.body || {};
 
@@ -124,14 +117,6 @@ export async function activateDevice(req: Request, res: Response) {
       return res.status(400).json({
         error: 'invalid_request',
         detail: 'deviceId and activationCode are required'
-      });
-    }
-
-    // productType必须提供
-    if (!productType) {
-      return res.status(400).json({
-        error: 'invalid_request',
-        detail: 'X-Product-Type header is required'
       });
     }
 
@@ -145,8 +130,8 @@ export async function activateDevice(req: Request, res: Response) {
       }
     }
 
-    // 激活设备
-    const device = await deviceService.activateDevice(deviceId, activationCode, productType, fingerprintJson);
+    // 激活设备（不需要传productType，从device的organization获取）
+    const device = await deviceService.activateDevice(deviceId, activationCode, fingerprintJson);
 
     // 获取组织名称
     const org = await prisma.organization.findUnique({ where: { id: device.orgId } });

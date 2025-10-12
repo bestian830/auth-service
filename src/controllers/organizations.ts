@@ -23,34 +23,16 @@ function validateOrgName(orgName: string): { valid: boolean; error?: string } {
 
 // 2.1 创建组织
 export async function createOrganization(req: Request, res: Response) {
-  const { orgName, orgType, parentOrgId, description, location, phone, email } = req.body;
+  const { orgName, orgType, parentOrgId, productType, description, location, phone, email } = req.body;
   const claims = (req as any).claims;
   const userId = claims?.sub;
-  const productTypeFromHeader = req.headers['x-product-type'] as string;
 
   try {
-    // 验证请求头
-    if (!productTypeFromHeader || !['beauty', 'fb'].includes(productTypeFromHeader)) {
-      return res.status(400).json({
-        error: 'invalid_request',
-        detail: 'X-Product-Type header is required and must be "beauty" or "fb"'
-      });
-    }
-
-    // 验证 token 中的 productType 与请求头一致
-    const productTypeFromToken = claims?.productType;
-    if (productTypeFromToken && productTypeFromToken !== productTypeFromHeader) {
-      return res.status(400).json({
-        error: 'product_type_mismatch',
-        detail: 'X-Product-Type header must match the product type in your access token'
-      });
-    }
-
     // 验证必填字段
-    if (!orgName || !orgType) {
+    if (!orgName || !orgType || !productType) {
       return res.status(400).json({
         error: 'missing_required_fields',
-        detail: 'orgName and orgType are required'
+        detail: 'orgName, orgType, and productType are required'
       });
     }
 
@@ -141,7 +123,7 @@ export async function createOrganization(req: Request, res: Response) {
         });
       }
 
-      if (parentOrg.productType !== productTypeFromHeader) {
+      if (parentOrg.productType !== productType) {
         return res.status(400).json({
           error: 'invalid_parent_org',
           detail: 'Parent organization must have matching product type'
@@ -162,7 +144,7 @@ export async function createOrganization(req: Request, res: Response) {
         userId,
         orgName: orgName.trim(),
         orgType: orgType as any,
-        productType: productTypeFromHeader as any,
+        productType: productType as any,
         parentOrgId: parentOrgId || null,
         description: description?.trim() || null,
         location: location?.trim() || null,
@@ -176,7 +158,7 @@ export async function createOrganization(req: Request, res: Response) {
       userId,
       orgId: organization.id,
       orgType,
-      productType: productTypeFromHeader
+      productType
     });
 
     return res.status(201).json({
@@ -208,31 +190,12 @@ export async function createOrganization(req: Request, res: Response) {
 export async function getOrganizations(req: Request, res: Response) {
   const claims = (req as any).claims;
   const userId = claims?.sub;
-  const productTypeFromHeader = req.headers['x-product-type'] as string;
   const { orgType, status } = req.query;
 
   try {
-    // 验证请求头
-    if (!productTypeFromHeader || !['beauty', 'fb'].includes(productTypeFromHeader)) {
-      return res.status(400).json({
-        error: 'invalid_request',
-        detail: 'X-Product-Type header is required and must be "beauty" or "fb"'
-      });
-    }
-
-    // 验证 token 中的 productType 与请求头一致
-    const productTypeFromToken = claims?.productType;
-    if (productTypeFromToken && productTypeFromToken !== productTypeFromHeader) {
-      return res.status(400).json({
-        error: 'product_type_mismatch',
-        detail: 'X-Product-Type header must match the product type in your access token'
-      });
-    }
-
     // 构建查询条件
     const where: any = {
-      userId,
-      productType: productTypeFromHeader
+      userId
     };
 
     if (orgType && ['MAIN', 'BRANCH', 'FRANCHISE'].includes(orgType as string)) {

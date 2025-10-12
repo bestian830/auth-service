@@ -81,18 +81,31 @@ export async function getSystemStats(_req: Request, res: Response) {
     // 统计 Users
     const [
       totalUsers,
-      lockedUsers,
-      beautyUsersResult,
-      fbUsersResult
+      lockedUsers
     ] = await Promise.all([
       prisma.user.count(),
-      prisma.user.count({ where: { lockedUntil: { gt: new Date() } } }),
-      prisma.organization.findMany({ where: { productType: 'beauty' }, select: { userId: true }, distinct: ['userId'] }),
-      prisma.organization.findMany({ where: { productType: 'fb' }, select: { userId: true }, distinct: ['userId'] })
+      prisma.user.count({ where: { lockedUntil: { gt: new Date() } } })
     ]);
 
-    const beautyUsers = beautyUsersResult.length;
-    const fbUsers = fbUsersResult.length;
+    // 统计各 productType 的用户数（通过组织关联）
+    const allOrgs = await prisma.organization.findMany({
+      where: { status: 'ACTIVE' },
+      select: { userId: true, productType: true },
+      distinct: ['userId', 'productType']
+    });
+
+    const productTypeUsers: Record<string, Set<string>> = {};
+    for (const org of allOrgs) {
+      if (!productTypeUsers[org.productType]) {
+        productTypeUsers[org.productType] = new Set();
+      }
+      productTypeUsers[org.productType].add(org.userId);
+    }
+
+    const usersByProductType: Record<string, number> = {};
+    for (const [productType, userSet] of Object.entries(productTypeUsers)) {
+      usersByProductType[productType] = userSet.size;
+    }
 
     // 本月新增用户
     const oneMonthAgo = new Date();
@@ -109,9 +122,7 @@ export async function getSystemStats(_req: Request, res: Response) {
       franchiseOrgs,
       activeOrgs,
       suspendedOrgs,
-      deletedOrgs,
-      beautyOrgs,
-      fbOrgs
+      deletedOrgs
     ] = await Promise.all([
       prisma.organization.count(),
       prisma.organization.count({ where: { orgType: 'MAIN' } }),
@@ -119,10 +130,18 @@ export async function getSystemStats(_req: Request, res: Response) {
       prisma.organization.count({ where: { orgType: 'FRANCHISE' } }),
       prisma.organization.count({ where: { status: 'ACTIVE' } }),
       prisma.organization.count({ where: { status: 'SUSPENDED' } }),
-      prisma.organization.count({ where: { status: 'DELETED' } }),
-      prisma.organization.count({ where: { productType: 'beauty' } }),
-      prisma.organization.count({ where: { productType: 'fb' } })
+      prisma.organization.count({ where: { status: 'DELETED' } })
     ]);
+
+    // 统计各 productType 的组织数
+    const orgsByProductTypeResult = await prisma.organization.groupBy({
+      by: ['productType'],
+      _count: true
+    });
+    const orgsByProductType: Record<string, number> = {};
+    for (const item of orgsByProductTypeResult) {
+      orgsByProductType[item.productType] = item._count;
+    }
 
     // 统计 Accounts
     const [
@@ -177,10 +196,7 @@ export async function getSystemStats(_req: Request, res: Response) {
         users: {
           total: totalUsers,
           locked: lockedUsers,
-          byProductType: {
-            beauty: beautyUsers,
-            fb: fbUsers
-          },
+          byProductType: usersByProductType,
           newThisMonth
         },
         organizations: {
@@ -195,10 +211,7 @@ export async function getSystemStats(_req: Request, res: Response) {
             SUSPENDED: suspendedOrgs,
             DELETED: deletedOrgs
           },
-          byProductType: {
-            beauty: beautyOrgs,
-            fb: fbOrgs
-          }
+          byProductType: orgsByProductType
         },
         accounts: {
           total: totalAccounts,

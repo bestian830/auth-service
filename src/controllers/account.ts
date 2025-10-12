@@ -8,15 +8,8 @@ import { jtiCache, isRedisConnected } from '../infra/redis.js';
 import bcrypt from 'bcryptjs';
 import { env } from '../config/env.js';
 
-function getProductType(req: Request): 'beauty' | 'fb' {
-  const pt = (req.headers['x-product-type'] || req.headers['X-Product-Type']) as string | undefined;
-  if (pt === 'beauty' || pt === 'fb') return pt;
-  throw Object.assign(new Error('invalid_product_type'), { status: 400 });
-}
-
 export async function loginBackend(req: Request, res: Response) {
   try {
-    const productType = getProductType(req);
     const { username, password } = req.body || {};
     if (!username || !password) {
       return res.status(400).json({ error: 'invalid_request', error_description: 'username and password are required' });
@@ -28,7 +21,7 @@ export async function loginBackend(req: Request, res: Response) {
     }
 
     try {
-      const account = await accountService.authenticateBackend(username, password, productType);
+      const account = await accountService.authenticateBackend(username, password);
 
       // 检查 accountType：STAFF 不能后台登录
       if (account.accountType === 'STAFF') {
@@ -58,11 +51,11 @@ export async function loginBackend(req: Request, res: Response) {
         });
       }
 
-      // 检查组织状态和 productType
-      if (account.organization.status !== 'ACTIVE' || account.organization.productType !== productType) {
+      // 检查组织状态
+      if (account.organization.status !== 'ACTIVE') {
         return res.status(403).json({
-          error: 'org_inactive_or_mismatch',
-          detail: 'Organization is inactive or does not match the product type'
+          error: 'org_inactive',
+          detail: 'Organization is inactive'
         });
       }
 
@@ -82,7 +75,7 @@ export async function loginBackend(req: Request, res: Response) {
       audit('account_login_backend', {
         accountId: account.id,
         orgId: account.orgId,
-        productType,
+        productType: account.organization.productType,
         ip: req.ip,
       });
 
@@ -94,7 +87,7 @@ export async function loginBackend(req: Request, res: Response) {
           username: account.username,
           employeeNumber: account.employeeNumber,
           accountType: account.accountType,
-          productType: account.productType,
+          productType: account.organization.productType,
           status: account.status,
           lastLoginAt: account.lastLoginAt,
         },
@@ -126,14 +119,12 @@ export async function loginBackend(req: Request, res: Response) {
       return res.status(401).json({ error: 'invalid_credentials', detail: 'Username or password is incorrect' });
     }
   } catch (err: any) {
-    const status = err?.status ?? 500;
-    return res.status(status).json({ error: status === 400 ? 'invalid_product_type' : 'server_error' });
+    return res.status(500).json({ error: 'server_error' });
   }
 }
 
 export async function loginPOS(req: Request, res: Response) {
   try {
-    const productType = getProductType(req);
     const deviceId = (req.headers['x-device-id'] || req.headers['X-Device-ID']) as string | undefined;
     const deviceFingerprint = (req.headers['x-device-fingerprint'] || req.headers['X-Device-Fingerprint']) as string | undefined;
 
@@ -147,7 +138,7 @@ export async function loginPOS(req: Request, res: Response) {
     }
 
     try {
-      const { account, device } = await accountService.authenticatePOS(pinCode, deviceId, productType);
+      const { account, device } = await accountService.authenticatePOS(pinCode, deviceId);
 
       // 可选：记录设备指纹变化（不阻止登录）
       if (deviceFingerprint) {
@@ -179,7 +170,7 @@ export async function loginPOS(req: Request, res: Response) {
       audit('account_login_pos', {
         accountId: account.id,
         orgId: account.orgId,
-        productType,
+        productType: device.organization.productType,
         deviceId,
         ip: req.ip,
       });
@@ -191,7 +182,7 @@ export async function loginPOS(req: Request, res: Response) {
           id: account.id,
           employeeNumber: account.employeeNumber,
           accountType: account.accountType,
-          productType: account.productType,
+          productType: device.organization.productType,
           status: account.status,
           lastLoginAt: account.lastLoginAt,
         },
@@ -235,8 +226,7 @@ export async function loginPOS(req: Request, res: Response) {
       return res.status(401).json({ error: 'invalid_credentials', detail: 'PIN code is incorrect' });
     }
   } catch (err: any) {
-    const status = err?.status ?? 500;
-    return res.status(status).json({ error: status === 400 ? 'invalid_product_type' : 'server_error' });
+    return res.status(500).json({ error: 'server_error' });
   }
 }
 
@@ -313,7 +303,7 @@ export async function me(req: Request, res: Response) {
       account: {
         id: account.id,
         accountType: account.accountType,
-        productType: account.productType,
+        productType: account.organization.productType,
         username: account.username,
         employeeNumber: account.employeeNumber,
         status: account.status,
@@ -352,12 +342,12 @@ function forbid(res: Response) {
 export async function createAccount(req: Request, res: Response) {
   try {
     const claims = getClaims(req);
-    const { orgId, accountType, productType, username, password, employeeNumber, pinCode, name, email, phone } = req.body || {};
+    const { orgId, accountType, username, password, employeeNumber, pinCode, name, email, phone } = req.body || {};
 
-    if (!orgId || !accountType || !productType || !employeeNumber || !pinCode) {
+    if (!orgId || !accountType || !employeeNumber || !pinCode) {
       return res.status(400).json({
         error: 'missing_required_fields',
-        detail: 'orgId, accountType, productType, employeeNumber, and pinCode are required'
+        detail: 'orgId, accountType, employeeNumber, and pinCode are required'
       });
     }
 
@@ -406,7 +396,6 @@ export async function createAccount(req: Request, res: Response) {
     const request = {
       orgId,
       accountType,
-      productType,
       username,
       password,
       employeeNumber,
@@ -419,6 +408,12 @@ export async function createAccount(req: Request, res: Response) {
 
     const { account, pinCode: plainPin } = await accountService.createAccount(request as any, claims.userType === 'USER' ? 'USER' : 'ACCOUNT');
 
+    // 获取组织信息以获取productType
+    const org = await prisma.organization.findUnique({
+      where: { id: account.orgId },
+      select: { productType: true }
+    });
+
     return res.status(201).json({
       success: true,
       message: 'Account created successfully',
@@ -426,7 +421,7 @@ export async function createAccount(req: Request, res: Response) {
         id: account.id,
         orgId: account.orgId,
         accountType: account.accountType,
-        productType: account.productType,
+        productType: org?.productType,
         username: account.username || undefined,
         employeeNumber: account.employeeNumber,
         pinCode: plainPin,
@@ -549,19 +544,36 @@ export async function listAccounts(req: Request, res: Response) {
         id: true,
         orgId: true,
         accountType: true,
-        productType: true,
         username: true,
         employeeNumber: true,
         status: true,
         lastLoginAt: true,
-        createdAt: true
+        createdAt: true,
+        organization: {
+          select: {
+            productType: true
+          }
+        }
       }
     });
 
+    // 将organization.productType提升到顶层
+    const accountsWithProductType = accounts.map(acc => ({
+      id: acc.id,
+      orgId: acc.orgId,
+      accountType: acc.accountType,
+      productType: acc.organization.productType,
+      username: acc.username,
+      employeeNumber: acc.employeeNumber,
+      status: acc.status,
+      lastLoginAt: acc.lastLoginAt,
+      createdAt: acc.createdAt
+    }));
+
     return res.json({
       success: true,
-      data: accounts,
-      total: accounts.length
+      data: accountsWithProductType,
+      total: accountsWithProductType.length
     });
   } catch (_e) {
     return res.status(500).json({ error: 'server_error' });
@@ -576,7 +588,7 @@ export async function getAccount(req: Request, res: Response) {
 
     const acc = await prisma.account.findUnique({
       where: { id: accountId },
-      include: { organization: { select: { orgName: true } } }
+      include: { organization: { select: { orgName: true, productType: true } } }
     });
 
     if (!acc) {
@@ -631,7 +643,7 @@ export async function getAccount(req: Request, res: Response) {
         orgId: acc.orgId,
         orgName: acc.organization.orgName,
         accountType: acc.accountType,
-        productType: acc.productType,
+        productType: acc.organization.productType,
         username: acc.username || undefined,
         employeeNumber: acc.employeeNumber,
         status: acc.status,

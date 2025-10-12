@@ -14,22 +14,12 @@ const identityService = new IdentityService();
 
 export async function register(req: Request, res: Response) {
   const { email, password, name, phone } = req.body;
-  const productType = req.get('X-Product-Type') as 'beauty' | 'fb' | undefined;
 
   try {
-    // 验证请求头：X-Product-Type 必填
-    if (!productType || (productType !== 'beauty' && productType !== 'fb')) {
-      audit('register_invalid_product_type', { ip: req.ip, productType: productType || 'missing' });
-      return res.status(400).json({ 
-        error: 'invalid_product_type',
-        detail: 'X-Product-Type header is required'
-      });
-    }
-
     // 验证必填字段
     if (!email || !password) {
       audit('register_invalid_request', { ip: req.ip, email: email || 'missing' });
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'missing_required_fields',
         detail: 'Email and password are required'
       });
@@ -120,11 +110,10 @@ export async function register(req: Request, res: Response) {
       email
     );
 
-    audit('user_register', { 
-      ip: req.ip, 
-      email, 
-      userId: newUser.id,
-      productType: productType || 'unknown'
+    audit('user_register', {
+      ip: req.ip,
+      email,
+      userId: newUser.id
     });
 
     return res.status(201).json({
@@ -246,7 +235,6 @@ export async function login(req: Request, res: Response) {
   const { email, password } = req.body;
   const ip = req.ip || 'unknown';
   const userAgent = req.get('User-Agent') || 'unknown';
-  const productType = req.get('X-Product-Type') as 'beauty' | 'fb' | undefined;
 
   try {
     // 1. 验证 email 格式
@@ -258,16 +246,7 @@ export async function login(req: Request, res: Response) {
       });
     }
 
-    // 2. 从请求头获取 X-Product-Type (必填)
-    if (!productType || (productType !== 'beauty' && productType !== 'fb')) {
-      audit('login_invalid_product_type', { ip, email, productType: productType || 'missing' });
-      return res.status(400).json({
-        error: 'invalid_product_type',
-        detail: 'X-Product-Type header is required and must be either "beauty" or "fb"'
-      });
-    }
-
-    // 3. 查询 User 记录
+    // 2. 查询 User 记录
     const user = await prisma.user.findUnique({
       where: { email }
     });
@@ -407,11 +386,10 @@ export async function login(req: Request, res: Response) {
       } as any
     });
 
-    // 11. 查询该用户的所有 organizations (按 productType 筛选)
+    // 11. 查询该用户的所有 organizations (不按 productType 筛选)
     const organizations = await prisma.organization.findMany({
       where: {
         userId: user.id,
-        productType: productType, // 已验证必填
         status: 'ACTIVE'
       },
       select: {
@@ -426,11 +404,10 @@ export async function login(req: Request, res: Response) {
     });
 
     // 12. 记录审计日志
-    audit('user_login', { 
-      ip, 
-      email, 
-      userId: user.id,
-      productType
+    audit('user_login', {
+      ip,
+      email,
+      userId: user.id
     });
 
     // 13. 返回用户信息和筛选后的组织列表 (不返回token)

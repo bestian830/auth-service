@@ -17,16 +17,6 @@
 - **认证方式**: Bearer Token (JWT)
 - **Content-Type**: `application/json`
 
-## 全局请求头
-
-所有来自前端的请求都应携带:
-
-http
-
-`X-Product-Type: beauty  // 或 fb`
-
-用于标识请求来自哪个产品前端,决定数据隔离边界。
-
 ---
 
 ## 1️⃣ User 用户管理模块 (`/api/auth-service/v1/identity`)
@@ -34,12 +24,6 @@ http
 ### 1.1 用户注册
 
 **端点**: `POST /api/auth-service/v1/identity/register`
-
-**请求头**:
-
-http
-
-`X-Product-Type: beauty  // 或 fb`
 
 **请求体**:
 
@@ -78,7 +62,7 @@ json
     - attempts = 0
     - resendCount = 0
 11. 发送验证邮件 (包含 6 位验证码)
-12. 记录到 audit_logs (action='user_register', detail 中记录 productType)
+12. 记录到 audit_logs (action='user_register')
 13. 返回 email (不返回 userId,避免信息泄露)
 
 **成功响应 (201)**:
@@ -326,12 +310,6 @@ json
 
 **端点**: `POST /api/auth-service/v1/identity/login`
 
-**请求头**:
-
-http
-
-`X-Product-Type: beauty  // 或 fb`
-
 **请求体**:
 
 json
@@ -349,14 +327,13 @@ json
 **处理逻辑**:
 
 1. 验证 email 格式
-2. 从请求头获取 `X-Product-Type`
-3. 查询 User 记录 (by email)
-4. 如果用户不存在 → 返回 401 "invalid_credentials" (不泄露用户是否存在)
-5. 检查账户状态:
+2. 查询 User 记录 (by email)
+3. 如果用户不存在 → 返回 401 "invalid_credentials" (不泄露用户是否存在)
+4. 检查账户状态:
     - 如果 emailVerifiedAt 为 null → 返回 401 "account_not_verified"
     - 如果 lockedUntil 不为 null 且 > NOW() → 返回 423 "account_locked"
-6. 使用 bcrypt.compare() 验证密码
-7. 如果密码错误:
+5. 使用 bcrypt.compare() 验证密码
+6. 如果密码错误:
     - loginFailureCount += 1
     - lastLoginFailureAt = NOW()
     - 如果 loginFailureCount >= LOGIN_LOCK_THRESHOLD (默认10次):
@@ -365,14 +342,14 @@ json
     - 保存 User 记录
     - 记录到 login_attempts (success=false, ipAddress, userAgent, organizationId=null)
     - 返回 401 "invalid_credentials"
-8. 如果密码正确:
+7. 如果密码正确:
     - 重置 loginFailureCount = 0, lastLoginFailureAt = null, lockedUntil = null, lockReason = null
     - 保存 User 记录
     - 记录到 login_attempts (success=true, ipAddress, userAgent)
     - 查询该用户的所有 organizations:
-        - 条件: userId = 当前用户 AND productType = 请求头的 productType
+        - 条件: userId = 当前用户
         - 按 createdAt ASC 排序
-    - 记录到 audit_logs (action='user_login', detail 中记录 productType)
+    - 记录到 audit_logs (action='user_login')
     - 返回用户信息和筛选后的组织列表
 
 **成功响应 (200)**:
@@ -393,14 +370,14 @@ json
       "id": "org-uuid-1",
       "orgName": "我的美容院总店",
       "orgType": "MAIN",
-      "productType": "beauty",
+      "productType": "beauty-salon",
       "status": "ACTIVE"
     },
     {
       "id": "org-uuid-2",
       "orgName": "我的美容院分店",
       "orgType": "BRANCH",
-      "productType": "beauty",
+      "productType": "beauty-salon",
       "parentOrgId": "org-uuid-1",
       "status": "ACTIVE"
     }
@@ -443,8 +420,7 @@ json
 
 **请求头:**
 
-`X-Product-Type: beauty  // 或 fb
-X-Device-ID: device-uuid  // 仅 POS 登录时需要`
+`X-Device-ID: device-uuid  // 仅 POS 登录时需要`
 
 此端点支持三种登录场景,通过请求体中的字段自动识别:
 
@@ -452,8 +428,7 @@ X-Device-ID: device-uuid  // 仅 POS 登录时需要`
 
 **请求头**:
 
-```http
-X-Product-Type: beauty  // 或 fb
+```
 (不需要有X-Device-ID)
 ```
 
@@ -468,23 +443,51 @@ client_id=tymoe-web           // 必须
 
 **处理逻辑**:
 
-1. 验证 `grant_type=password` 和 `X-Product-Type`
+1. 验证 `grant_type=password`
 2. 验证 `client_id` 存在
 3. 验证用户凭证（邮箱 + 密码）
 4. 检查邮箱是否已验证
-5. 查询该用户在该 productType 下的所有组织 ID
+5. 查询该用户的所有组织 ID
 6. 生成 **access_token** (JWT, RS256 签名):
 
 ```json
 {
-  "sub": "user-uuid",
+  "sub": "user-uuid-123",
   "userType": "USER",
   "email": "user@example.com",
-  "productType": "beauty",
-  "organizationIds": ["org1", "org2", "org3"],  // 数组，多组织
-  "iat": 1640991600,
-  "exp": 1640995200,  // 60分钟后过期
-  "jti": "unique-token-id"
+  "organizations": [
+    {
+      "id": "org-main-uuid-456",
+      "orgName": "维多利亚总店",
+      "orgType": "MAIN",
+      "productType": "hair-salon",
+      "parentOrgId": null,
+      "role": "USER", 
+      "status": "ACTIVE"
+    },
+    {
+      "id": "org-branch-uuid-789",
+      "orgName": "温哥华直营分店",
+      "orgType": "BRANCH",
+      "productType": "hair-salon",
+      "parentOrgId": "org-main-uuid-456", // 关联到总店
+      "role": "USER",
+      "status": "ACTIVE"
+    },
+    {
+      "id": "org-franchise-uuid-101",
+      "orgName": "本拿比加盟店",
+      "orgType": "FRANCHISE",
+      "productType": "hair-salon",
+      "parentOrgId": "org-main-uuid-456", // 关联到总店
+      "role": "USER",
+      "status": "ACTIVE"
+    }
+  ],
+  
+  "iat": 1728692400,
+  "exp": 1728696000,  // 60分钟后过期 (示例时间戳)
+  "jti": "unique-token-id-xyz"
 }
 ```
 
@@ -508,7 +511,6 @@ client_id=tymoe-web           // 必须
 **请求头**:
 
 ```http
-X-Product-Type: beauty  // 或 fb
 (不需要有X-Device-ID)
 ```
 
@@ -523,7 +525,7 @@ client_id=tymoe-web
 
 **处理逻辑**:
 
-1. 验证 `grant_type=password` 和 `X-Product-Type`
+1. 验证 `grant_type=password`
 2. 验证 `client_id` 存在
 3. 验证 Account 凭证（username 不包含 @ 符号）
 4. 检查账号类型（只允许 OWNER/MANAGER 后台登录）
@@ -537,11 +539,19 @@ client_id=tymoe-web
   "accountType": "MANAGER",
   "username": "manager001",
   "employeeNumber": "EMP001",
-  "productType": "beauty",
-  "organizationId": "org-uuid",  // 单值，绑定特定组织
-  "iat": 1640991600,
-  "exp": 1640995200,  // 60分钟
-  "jti": "unique-token-id"
+  "organizations": 
+    {
+      "id": "org-franchise-uuid-101",
+      "orgName": "本拿比加盟店",
+      "orgType": "FRANCHISE",
+      "productType": "cafe",
+      "parentOrgId": "org-main-uuid-456", // 关联到总店
+      "role": "MANAGER",   // 推荐：当前用户在该组织的角色
+      "status": "ACTIVE"
+    },
+  "iat": 1728692400,
+  "exp": 1728696000,  // 60分钟后过期 (示例时间戳)
+  "jti": "unique-token-id-xyz"
 }
 ```
 
@@ -568,7 +578,6 @@ client_id=tymoe-web
 **请求头**:
 
 ```http
-X-Product-Type: beauty  // 或 fb
 X-Device-ID: device-uuid
 ```
 
@@ -581,18 +590,19 @@ pin_code=1234`
 
 **生成的 access_token (JWT):**
 
-`{
+```json
+{
   "sub": "account-uuid",
   "userType": "ACCOUNT",
   "accountType": "STAFF",
   "employeeNumber": "EMP002",
-  "productType": "beauty",
   "organizationId": "org-uuid",
-  "deviceId": "device-uuid",  *// POS 特有*
+  "productType": "cafe",       //organization表中的 productType
+  "deviceId": "device-uuid",  // POS 特有
   "iat": 1640991600,
-  "exp": 1641007800,  *// 4.5小时 (16200秒)*
+  "exp": 1641007800,  // 4.5小时 (16200秒)
   "jti": "unique-token-id"
-}`
+}```
 
 **不生成 refresh_token** (POS 登录为一次性 Token)
 
@@ -627,6 +637,7 @@ json
   "token_type": "Bearer",
   "expires_in": 16200
 }`
+```
 
 ---
 
@@ -648,7 +659,7 @@ json
 
 ### 1.6 刷新 Token
 
-**端点**: `POST /oauth/token`
+**端点:** `POST /oauth/token`
 
 **请求体** (application/x-www-form-urlencoded):
 
@@ -683,20 +694,55 @@ client_id=tymoe-web
   "refresh_token": "550e8400-e29b-41d4-a716-446655440000",  // 原来的，不变
   "token_type": "Bearer",
   "expires_in": 3600
-}
-```
+}```
 
 **新 Access Token Payload** (User):
 
 ```json
 {
-  "sub": "user-uuid",
+  "sub": "user-uuid-123",
   "userType": "USER",
   "email": "user@example.com",
-  "productType": "beauty",
-  "organizationIds": ["org1", "org2", "org3", "org4"],  // 可能有新增
-  "iat": 1640995200,
-  "exp": 1640998800,  // 新的过期时间
+  "organizations": [                      // 有可能新增或减少
+    {
+      "id": "org-main-uuid-456",
+      "orgName": "维多利亚总店",
+      "orgType": "MAIN",
+      "productType": "hair-salon",
+      "parentOrgId": null,
+      "role": "USER", 
+      "status": "ACTIVE"
+    },
+    {
+      "id": "org-branch-uuid-789",
+      "orgName": "温哥华直营分店",
+      "orgType": "BRANCH",
+      "productType": "hair-salon",
+      "parentOrgId": "org-main-uuid-456", // 关联到总店
+      "role": "USER",
+      "status": "ACTIVE"
+    },
+    {
+      "id": "org-franchise-uuid-101",
+      "orgName": "本拿比加盟店",
+      "orgType": "FRANCHISE",
+      "productType": "hair-salon",
+      "parentOrgId": "org-main-uuid-456", // 关联到总店
+      "role": "USER",
+      "status": "ACTIVE"
+    },
+    {
+      "id": "org-franchise-uuid-997",
+      "orgName": "高贵林加盟店",
+      "orgType": "FRANCHISE",
+      "productType": "hair-salon",
+      "parentOrgId": "org-main-uuid-456", // 关联到总店
+      "role": "USER",
+      "status": "ACTIVE"
+    }
+  ],
+  "iat": 1728692400,
+  "exp": 1728696000,  // 新的过期时间
   "jti": "new-unique-id"  // 新的 JTI
 }
 ```
@@ -714,17 +760,24 @@ client_id=tymoe-web
 
 **新 Access Token Payload** (Account):
 
-```json
-{
+```json{
   "sub": "account-uuid",
   "userType": "ACCOUNT",
   "accountType": "MANAGER",
   "username": "manager001",
   "employeeNumber": "EMP001",
-  "productType": "beauty",
-  "organizationId": "org-uuid",  // 不变
+  "organizations":                  // 不变
+    {
+      "id": "org-franchise-uuid-101",
+      "orgName": "本拿比加盟店",
+      "orgType": "FRANCHISE",
+      "productType": "cafe",
+      "parentOrgId": "org-main-uuid-456", // 关联到总店
+      "role": "MANAGER",   // 推荐：当前用户在该组织的角色
+      "status": "ACTIVE"
+    },
   "iat": 1640995200,
-  "exp": 1640998800,
+  "exp": 1640998800,  // 60分钟后过期 (示例时间戳)
   "jti": "new-unique-id"
 }
 ```
@@ -1205,24 +1258,23 @@ json
 
 ### 关键设计点
 
-1. **产品隔离**: 所有前端请求携带 `X-Product-Type` 请求头 (beauty/fb)
-2. **注册流程**: 注册时只创建 User 账号,不创建组织
-3. **OAuth2 标准**: 登录接口不直接返回 token,需调用 `/oauth/token`
-4. **Token 设计**:
-    - Access token: 60分钟过期,包含 userId, productType, organizationIds, permissions
+1. **注册流程**: 注册时只创建 User 账号,不创建组织
+2. **OAuth2 标准**: 登录接口不直接返回 token,需调用 `/oauth/token`
+3. **Token 设计**:
+    - Access token: 60分钟过期,包含 userId, productType, organizationIds, orgType等
     - Refresh token: 90天过期,支持家族化管理和轮换
-5. **登出安全**: 撤销 refresh_token 家族 + access_token jti 加入 Redis 黑名单
-6. **验证码机制**:
+4. **登出安全**: 撤销 refresh_token 家族 + access_token jti 加入 Redis 黑名单
+5. **验证码机制**:
     - 6位数字验证码
     - bcrypt 哈希存储
     - 最多尝试10次
     - 最多重发5次
     - 30分钟过期 (密码重置10分钟)
-7. **账户安全**:
+6. **账户安全**:
     - 10次登录失败后锁定30分钟
     - 所有密码使用 bcrypt (salt rounds = 10)
     - 速率限制通过 Redis 实现
-8. **审计日志**: 所有重要操作记录到 audit_logs
+7. **审计日志**: 所有重要操作记录到 audit_logs
 
 ### 数据库表依赖
 
@@ -1267,8 +1319,6 @@ json
 **数据隔离**:
 
 - 通过 orgId 隔离不同店铺的业务数据
-- 所有请求需要携带 `X-Product-Type` 请求头
-- User 在 beauty 前端只能看到 productType=beauty 的组织
 
 ---
 
@@ -1278,8 +1328,7 @@ json
 
 **请求头**:
 
-`Authorization: Bearer <access_token>
-X-Product-Type: beauty  // 或 fb`
+`Authorization: Bearer <access_token>`
 
 **请求体**:
 
@@ -1287,7 +1336,8 @@ X-Product-Type: beauty  // 或 fb`
   "orgName": "我的美容院总店",
   "orgType": "MAIN",
   "parentOrgId": null,
-  "description": "专业美容服务",
+  "productType": "restaurant",
+  "description": "中餐馆",
   "location": "123 Main St, Vancouver, BC, V6B 1A1",
   "phone": "+16041234567",
   "email": "store@example.com"
@@ -1300,6 +1350,7 @@ X-Product-Type: beauty  // 或 fb`
 - `parentOrgId` (条件必填, UUID): 父组织ID
     - MAIN: 必须为 null
     - BRANCH/FRANCHISE: 必填,必须是自己拥有的 MAIN 组织
+- `productType` (必填, enum): 店铺类型, "beauty_salon" | "hair_salon" | "spa" | "restaurant" | "fast_food" | "cafe " | "beverage" | "home_studio" | "fitness" | "yoga_studio" | "retail" | "chinese_restautant" | "clinic" | "liquor_store" | "other"
 - `description` (可选, text): 描述
 - `location` (可选, string): 店铺地址
 - `phone` (可选, string): 店铺电话,国际格式
@@ -1307,12 +1358,11 @@ X-Product-Type: beauty  // 或 fb`
 
 **处理逻辑**:
 
-1. 从 access_token 中提取 userId 和 productType
-2. 从请求头获取 `X-Product-Type`,验证与 token 中的 productType 一致
-3. 验证 orgName 格式 (2-100字符)
-4. 验证 phone 格式 (使用 libphonenumber)
-5. 验证 email 格式
-6. 根据 orgType 验证 parentOrgId:
+1. 从 access_token 中提取 userId
+2. 验证 orgName 格式 (2-100字符)
+3. 验证 phone 格式 (使用 libphonenumber)
+4. 验证 email 格式
+5. 根据 orgType 验证 parentOrgId:
     - 如果 orgType = 'MAIN':
         - parentOrgId 必须为 null
         - 用户可以拥有多个不同品牌的 MAIN 组织（例如：既是7分甜的老板，又是名创优品的老板）
@@ -1321,15 +1371,14 @@ X-Product-Type: beauty  // 或 fb`
         - 查询 parent 组织,验证:
             - 存在且 userId = 当前用户
             - orgType = 'MAIN'
-            - productType = 请求头的 productType
+            - productType = 'productType'
             - status = 'ACTIVE'
         - 如果验证失败 → 返回 400 "invalid_parent_org"
-7. 创建 Organization 记录:
+6. 创建 Organization 记录:
     - userId = 当前用户 ID (老板)
-    - productType = 请求头的 X-Product-Type
     - status = 'ACTIVE'
-8. 记录到 audit_logs (action='org_created')
-9. 返回创建的组织信息
+7. 记录到 audit_logs (action='org_created')
+8. 返回创建的组织信息
 
 **成功响应 (201)**:
 
@@ -1340,9 +1389,9 @@ X-Product-Type: beauty  // 或 fb`
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "orgName": "我的美容院总店",
     "orgType": "MAIN",
-    "productType": "beauty",
+    "productType": "restaurant",
     "parentOrgId": null,
-    "description": "专业美容服务",
+    "description": "中餐馆",
     "location": "123 Main St, Vancouver, BC, V6B 1A1",
     "phone": "+16041234567",
     "email": "store@example.com",
@@ -1371,7 +1420,6 @@ X-Product-Type: beauty  // 或 fb`
 **请求头**:
 
 `Authorization: Bearer <access_token>
-X-Product-Type: beauty  // 或 fb`
 
 **查询参数**:
 
@@ -1382,15 +1430,14 @@ X-Product-Type: beauty  // 或 fb`
 **处理逻辑**:
 
 1. 从 access_token 中提取 userId 和 productType
-2. 从请求头获取 `X-Product-Type`,验证与 token 中的 productType 一致
-3. 查询 organizations 表:
-    - 条件: userId = 当前用户 AND productType = 请求头的 productType
+2. 查询 organizations 表:
+    - 条件: userId = 当前用户
     - 如果指定了 orgType → AND orgType = ?
     - 如果指定了 status → AND status = ?
     - 如果未指定 status → 默认只返回 ACTIVE
-4. 按 orgType (MAIN优先), createdAt ASC 排序
-5. 对于每个组织,如果有 parentOrgId,附加父组织的名称
-6. 返回列表
+3. 按 orgType (MAIN优先), createdAt ASC 排序
+4. 对于每个组织,如果有 parentOrgId,附加父组织的名称
+5. 返回列表
 
 **成功响应 (200)**:
 
@@ -1401,7 +1448,7 @@ X-Product-Type: beauty  // 或 fb`
       "id": "550e8400-e29b-41d4-a716-446655440001",
       "orgName": "我的美容院总店",
       "orgType": "MAIN",
-      "productType": "beauty",
+      "productType": "beauty-salon",
       "parentOrgId": null,
       "description": "专业美容服务",
       "location": "123 Main St, Vancouver, BC",
@@ -1414,7 +1461,7 @@ X-Product-Type: beauty  // 或 fb`
       "id": "550e8400-e29b-41d4-a716-446655440002",
       "orgName": "市中心分店",
       "orgType": "BRANCH",
-      "productType": "beauty",
+      "productType": "beauty-salon",
       "parentOrgId": "550e8400-e29b-41d4-a716-446655440001",
       "parentOrgName": "我的美容院总店",
       "location": "456 Downtown St, Vancouver, BC",
@@ -1425,7 +1472,7 @@ X-Product-Type: beauty  // 或 fb`
       "id": "550e8400-e29b-41d4-a716-446655440003",
       "orgName": "东区加盟店",
       "orgType": "FRANCHISE",
-      "productType": "beauty",
+      "productType": "beauty-salon",
       "parentOrgId": "550e8400-e29b-41d4-a716-446655440001",
       "parentOrgName": "我的美容院总店",
       "location": "789 East St, Vancouver, BC",
@@ -1467,7 +1514,7 @@ X-Product-Type: beauty  // 或 fb`
     "id": "550e8400-e29b-41d4-a716-446655440001",
     "orgName": "我的美容院总店",
     "orgType": "MAIN",
-    "productType": "beauty",
+    "productType": "beauty_salon",
     "parentOrgId": null,
     "description": "专业美容服务",
     "location": "123 Main St, Vancouver, BC, V6B 1A1",
@@ -1491,7 +1538,7 @@ X-Product-Type: beauty  // 或 fb`
     "id": "550e8400-e29b-41d4-a716-446655440002",
     "orgName": "市中心分店",
     "orgType": "BRANCH",
-    "productType": "beauty",
+    "productType": "beauty_salon",
     "parentOrgId": "550e8400-e29b-41d4-a716-446655440001",
     "parentOrgName": "我的美容院总店",
     "description": "市中心旗舰店",
@@ -1536,6 +1583,7 @@ X-Product-Type: beauty  // 或 fb`
   "location": "新地址",
   "phone": "+16047654321",
   "email": "newemail@example.com"
+  "productType": "beauty-salon"
 }`
 
 **字段说明**:
@@ -1545,8 +1593,9 @@ X-Product-Type: beauty  // 或 fb`
 - `location` (可选, string): 地址
 - `phone` (可选, string): 电话
 - `email` (可选, string): 邮箱
+- `productType` (可选, enum): 店铺类型
 
-**注意**: 不能修改 orgType, productType, parentOrgId, userId, status
+**注意**: 不能修改 orgType, parentOrgId, userId, status
 
 **处理逻辑**:
 
@@ -1569,7 +1618,7 @@ X-Product-Type: beauty  // 或 fb`
     "id": "550e8400-e29b-41d4-a716-446655440001",
     "orgName": "我的美容院总店(更新)",
     "orgType": "MAIN",
-    "productType": "beauty",
+    "productType": "beauty_salon",
     "description": "专业美容服务 - 10年老店",
     "location": "新地址",
     "phone": "+16047654321",
@@ -1745,10 +1794,6 @@ X-Product-Type: beauty  // 或 fb`
 
 **端点:** `POST /api/auth-service/v1/accounts/login`
 
-**请求头:**
-
-`X-Product-Type: beauty  // 或 fb`
-
 **请求体:**
 
 `{
@@ -1763,17 +1808,16 @@ X-Product-Type: beauty  // 或 fb`
 
 **处理逻辑:**
 
-1. 从请求头获取 X-Product-Type
-2. 验证 username 和 password 格式
-3. 查询 accounts 表 (by username, status != 'DELETED')
-4. 如果不存在 → 返回 401 "invalid_credentials"
-5. 检查账户类型: 如果 accountType = 'STAFF' → 返回 400 "staff_no_backend_access"
-6. 检查账户状态: 如果 status != 'ACTIVE' → 返回 401 "account_suspended"
-7. 使用 bcrypt.compare() 验证密码,如果错误 → 返回 401 "invalid_credentials"
-8. 查询关联的 organization,验证 productType 和 status
-9. 更新 accounts.lastLoginAt = NOW()
-10. 记录到 login_attempts 和 audit_logs
-11. 返回账号和组织信息
+1. 验证 username 和 password 格式
+2. 查询 accounts 表 (by username, status != 'DELETED')
+3. 如果不存在 → 返回 401 "invalid_credentials"
+4. 检查账户类型: 如果 accountType = 'STAFF' → 返回 400 "staff_no_backend_access"
+5. 检查账户状态: 如果 status != 'ACTIVE' → 返回 401 "account_suspended"
+6. 使用 bcrypt.compare() 验证密码,如果错误 → 返回 401 "invalid_credentials"
+7. 查询关联的 organization,验证 productType 和 status
+8. 更新 accounts.lastLoginAt = NOW()
+9.  记录到 login_attempts 和 audit_logs
+10. 返回账号和组织信息
 
 **成功响应 (200):**
 
@@ -1784,7 +1828,6 @@ X-Product-Type: beauty  // 或 fb`
     "username": "manager001",
     "employeeNumber": "EMP001",
     "accountType": "MANAGER",
-    "productType": "beauty",
     "status": "ACTIVE",
     "lastLoginAt": "2025-01-16T10:00:00.000Z"
   },
@@ -1792,7 +1835,7 @@ X-Product-Type: beauty  // 或 fb`
     "id": "org-uuid",
     "orgName": "市中心分店",
     "orgType": "BRANCH",
-    "productType": "beauty",
+    "productType": "beauty_salon",
     "status": "ACTIVE"
   }
 }`
@@ -1814,8 +1857,7 @@ X-Product-Type: beauty  // 或 fb`
 
 **请求头:**
 
-`X-Product-Type: fb
-X-Device-ID: device-uuid  // 必须
+`X-Device-ID: device-uuid  // 必须
 X-Device-Fingerprint: {...}  // 可选,JSON字符串`
 
 **请求体:**
@@ -1831,13 +1873,13 @@ X-Device-Fingerprint: {...}  // 可选,JSON字符串`
 
 **处理逻辑:**
 
-1. 从请求头获取 X-Device-ID, X-Product-Type, X-Device-Fingerprint(可选)
+1. 从请求头获取 X-Device-ID, X-Device-Fingerprint(可选)
 2. 验证 pinCode 格式
 3. 查询 devices 表验证设备存在且 status = 'ACTIVE'
 4. 获取 device.orgId
 5. 在该组织下查询 pinCode 对应的账号
 6. 使用 bcrypt.compare() 验证 pinCode
-7. 验证组织的 productType 和 status
+7. 验证组织的status
 8. 可选:如果提供设备指纹,记录/对比变化(不阻止登录)
 9. 更新 devices.lastActiveAt 和 accounts.lastLoginAt
 10. 记录到 login_attempts 和 audit_logs
@@ -1851,7 +1893,6 @@ X-Device-Fingerprint: {...}  // 可选,JSON字符串`
     "id": "account-uuid",
     "employeeNumber": "EMP001",
     "accountType": "STAFF",
-    "productType": "fb",
     "status": "ACTIVE",
     "lastLoginAt": "2025-01-16T10:00:00.000Z"
   },
@@ -1859,7 +1900,7 @@ X-Device-Fingerprint: {...}  // 可选,JSON字符串`
     "id": "org-uuid",
     "orgName": "市中心分店",
     "orgType": "BRANCH",
-    "productType": "fb",
+    "productType": "beverage",
     "status": "ACTIVE"
   },
   "device": {
@@ -1942,7 +1983,6 @@ POS 登出时:
 `{
   "orgId": "org-uuid",
   "accountType": "MANAGER",
-  "productType": "beauty",
   "username": "manager001",
   "password": "Password123!",
   "employeeNumber": "EMP001",
@@ -1954,7 +1994,6 @@ POS 登出时:
 `{
   "orgId": "org-uuid",
   "accountType": "STAFF",
-  "productType": "beauty",
   "employeeNumber": "EMP002",
   "pinCode": "5678"
 }`
@@ -1963,7 +2002,6 @@ POS 登出时:
 
 - orgId (必填, UUID): 所属组织ID
 - accountType (必填, enum): "OWNER" | "MANAGER" | "STAFF"
-- productType (必填, enum): "beauty" | "fb"
 - username (条件必填, string): OWNER/MANAGER必填,全局唯一,4-50字符,不能包含@符号.
 - password (条件必填, string): OWNER/MANAGER必填,至少8位,包含大小写字母和数字
 - employeeNumber (必填, string): 员工号,组织内唯一
@@ -1985,7 +2023,6 @@ POS 登出时:
     "id": "account-uuid",
     "orgId": "org-uuid",
     "accountType": "MANAGER",
-    "productType": "beauty",
     "username": "manager001",
     "employeeNumber": "EMP001",
     "pinCode": "1234",
@@ -2087,7 +2124,6 @@ Authorization: Bearer <manager-token>
       "id": "account-uuid-1",
       "orgId": "org-uuid",
       "accountType": "OWNER",
-      "productType": "beauty",
       "username": "franchisee001",
       "employeeNumber": "EMP000",
       "status": "ACTIVE",
@@ -2124,7 +2160,6 @@ Authorization: Bearer <manager-token>
     "orgId": "org-uuid",
     "orgName": "东区加盟店",
     "accountType": "MANAGER",
-    "productType": "beauty",
     "username": "manager001",
     "employeeNumber": "EMP001",
     "status": "ACTIVE",
@@ -2159,7 +2194,7 @@ Authorization: Bearer <manager-token>
 
 **不可修改:**
 
-- accountType, productType, orgId, employeeNumber, password, pinCode
+- accountType, orgId, employeeNumber, password, pinCode
 
 **权限规则:**
 
@@ -2618,7 +2653,6 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **请求头:**
 
-`X-Product-Type: beauty  // 或 fb
 X-Device-Fingerprint: {...}  // 可选，设备指纹JSON`
 
 **请求体:**
@@ -2650,16 +2684,15 @@ X-Device-Fingerprint: {...}  // 可选，设备指纹JSON`
 1. 如果不存在 → 返回 404 "invalid_device_or_code"
 2. 如果 status != 'PENDING' → 返回 400 "device_already_activated"
 3. 查询组织，验证 org.status = 'ACTIVE'
-4. 验证 org.productType = 请求头的 productType
-5. 激活设备:
+4. 激活设备:
     - status = 'ACTIVE'
     - deviceName = "收银台-001"
     - activatedAt = NOW()
     - lastActiveAt = NOW()
     - deviceFingerprint = 请求头的 deviceFingerprint（如果有）
     - updatedAt = NOW()
-6. 记录到 audit_logs
-7. 返回设备信息
+5. 记录到 audit_logs
+6. 返回设备信息
 
 ---
 
@@ -3194,7 +3227,6 @@ function verifyToken(token) {
     "firstName": "John",
     "lastName": "Doe",
     "phone": "+1234567890",
-    "productType": "beauty",
     "status": "ACTIVE",
     "emailVerified": true,
     "createdAt": "2025-01-10T10:00:00.000Z",
@@ -3202,12 +3234,14 @@ function verifyToken(token) {
       {
         "id": "org-uuid-1",
         "orgName": "主店",
-        "orgType": "MAIN"
+        "orgType": "MAIN",
+        "productType": "beauty_salon"
       },
       {
         "id": "org-uuid-2",
         "orgName": "东区分店",
-        "orgType": "BRANCH"
+        "orgType": "BRANCH",
+        "productType": "beauty_salon"
       }
     ]
   }
@@ -3222,14 +3256,14 @@ function verifyToken(token) {
     "username": "manager001",
     "employeeNumber": "EMP001",
     "accountType": "MANAGER",
-    "productType": "beauty",
     "status": "ACTIVE",
     "lastLoginAt": "2025-01-16T09:30:00.000Z",
     "createdAt": "2025-01-15T10:00:00.000Z",
     "organization": {
       "id": "org-uuid",
       "orgName": "东区分店",
-      "orgType": "BRANCH"
+      "orgType": "BRANCH",
+      "productType": "beauty_salon",
     }
   }
 }`
@@ -3771,10 +3805,6 @@ ADMIN_API_KEYS=admin_alice_sk_a1b2c3d4e5f6,admin_bob_sk_x9y8z7w6v5u4`
         "SUSPENDED": 3,
         "DELETED": 2
       },
-      "byProductType": {
-        "beauty": 90,
-        "fb": 60
-      },
       "newThisMonth": 12
     },
     "organizations": {
@@ -3789,8 +3819,9 @@ ADMIN_API_KEYS=admin_alice_sk_a1b2c3d4e5f6,admin_bob_sk_x9y8z7w6v5u4`
         "INACTIVE": 10
       },
       "byProductType": {
-        "beauty": 180,
-        "fb": 120
+        "beauty_salon": 180,
+        "home_studio": 120,
+        "fast_food":5000
       }
     },
     "accounts": {

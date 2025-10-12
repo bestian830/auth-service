@@ -73,8 +73,21 @@ enum OrgType {
 }
 
 enum ProductType {
-  beauty
-  fb
+  beauty_salon
+  hair_salon
+  spa
+  restaurant
+  fast_food
+  cafe
+  beverage
+  home_studio
+  fitness
+  yoga_studio
+  retail
+  chinese_restaurant
+  clinic
+  liquor_store
+  other
 }
 
 enum OrgStatus {
@@ -88,7 +101,6 @@ model Account {
   id                 String        @id @default(uuid())
   orgId              String
   accountType        AccountType
-  productType        ProductType
   username           String?       @unique
   passwordHash       String?
   employeeNumber     String

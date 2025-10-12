@@ -11,7 +11,6 @@ import { audit } from '../middleware/audit.js';
 export interface CreateAccountRequest {
   orgId: string;
   accountType: 'OWNER' | 'MANAGER' | 'STAFF';
-  productType: string; // 'beauty' | 'fb'
   username?: string;
   password?: string;
   employeeNumber: string;
@@ -188,12 +187,11 @@ export class AccountService {
 
     const pinCodeHash = await bcrypt.hash(request.pinCode, env.passwordHashRounds);
 
-    // 8. 创建Account记录
+    // 8. 创建Account记录（不再包含productType字段）
     const account = await prisma.account.create({
       data: {
         orgId: request.orgId,
         accountType: request.accountType,
-        productType: request.productType as any,
         username,
         passwordHash,
         employeeNumber: request.employeeNumber,
@@ -233,19 +231,16 @@ export class AccountService {
    * 仅适用OWNER和MANAGER
    * @param username - 用户名
    * @param password - 密码
-   * @param productType - 产品类型
    * @returns 账号信息（包含组织信息）
    */
   async authenticateBackend(
     username: string,
-    password: string,
-    productType: string
+    password: string
   ): Promise<Account & { organization: any }> {
-    // 1. 查询Account
+    // 1. 查询Account（不再按productType筛选）
     const account = await prisma.account.findFirst({
       where: {
         username,
-        productType: productType as any,
         status: 'ACTIVE',
         accountType: { in: ['OWNER', 'MANAGER'] }, // STAFF不能后台登录
       },
@@ -306,13 +301,11 @@ export class AccountService {
    * 适用所有类型的Account
    * @param pinCode - PIN码
    * @param deviceId - 设备ID
-   * @param productType - 产品类型
    * @returns 账号和设备信息
    */
   async authenticatePOS(
     pinCode: string,
-    deviceId: string,
-    productType: string
+    deviceId: string
   ): Promise<{
     account: Account;
     device: Device & { organization: any };
@@ -331,11 +324,10 @@ export class AccountService {
       throw new Error('device_not_active');
     }
 
-    // 2. 查询该组织下所有ACTIVE账号，逐一验证PIN码
+    // 2. 查询该组织下所有ACTIVE账号，逐一验证PIN码（不再按productType筛选）
     const accounts = await prisma.account.findMany({
       where: {
         orgId: device.orgId,
-        productType: productType as any,
         status: 'ACTIVE',
       },
     });
