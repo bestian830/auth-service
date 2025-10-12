@@ -1,6 +1,9 @@
 # ==================== Build Stage ====================
 FROM node:20-alpine AS builder
 
+# 安装 OpenSSL 3.x (Alpine 默认版本)
+RUN apk add --no-cache openssl-dev openssl
+
 # 设置工作目录
 WORKDIR /app
 
@@ -24,10 +27,11 @@ RUN npm run build
 # ==================== Production Stage ====================
 FROM node:20-alpine AS production
 
-# 安装必要的系统包
+# 安装必要的系统包（包括 OpenSSL 3.x）
 RUN apk add --no-cache \
     curl \
     postgresql-client \
+    openssl \
     && rm -rf /var/cache/apk/*
 
 # 创建非root用户
