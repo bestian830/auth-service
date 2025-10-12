@@ -8,6 +8,7 @@ set -e  # 遇到错误立即退出
 SERVICE_NAME="auth-service-app"
 COMPOSE_FILE="docker-compose.full.yml"
 IMAGE_NAME="auth-service"
+VERSION="2.1.2"  # 从 package.json 同步的版本号
 
 # 颜色定义
 RED='\033[0;31m'
@@ -71,10 +72,15 @@ cleanup_old_service() {
 build_image() {
     log_info "Building new Docker image..."
 
-    # 构建镜像
-    docker build -t ${IMAGE_NAME}:latest -t ${IMAGE_NAME}:$(date +%Y%m%d-%H%M%S) .
+    # 构建镜像（带版本号和时间戳）
+    docker build \
+        -t ${IMAGE_NAME}:latest \
+        -t ${IMAGE_NAME}:${VERSION} \
+        -t ${IMAGE_NAME}:${VERSION}-$(date +%Y%m%d-%H%M%S) \
+        .
 
     log_success "Image built successfully"
+    log_info "Image tags: latest, ${VERSION}, ${VERSION}-$(date +%Y%m%d-%H%M%S)"
 }
 
 # 运行数据库迁移

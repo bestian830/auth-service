@@ -1,6 +1,6 @@
 - # API端点设计文档
 
-# Auth Service v2.1.1 - 第一部分:User用户管理模块
+# Auth Service v2.1.2 - 第一部分:User用户管理模块
 
 ## 设计原则
 
@@ -1292,7 +1292,7 @@ json
 
 ---
 
-# Auth Service v2.1.1 - 第二部分:Organization组织管理模块
+# Auth Service v2.1.2 - 第二部分:Organization组织管理模块
 
 ## 2️⃣ Organization 组织管理模块 (`/api/auth-service/v1/organizations`)
 
@@ -1680,7 +1680,7 @@ json
 
 ---
 
-# Auth Service v2.1.1 - 第三部分:Account账号管理模块
+# Auth Service v2.1.2 - 第三部分:Account账号管理模块
 
 ## 3️⃣ Account 账号管理模块 (/api/auth-service/v1/accounts)
 
@@ -2400,7 +2400,7 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 ---
 
-# Auth Service v2.1.1 - 第四部分:Device设备管理模块 (最终版)
+# Auth Service v2.1.2 - 第四部分:Device设备管理模块 (最终版)
 
 ## 4️⃣ Device 设备管理模块 (/api/auth-service/v1/devices)
 
@@ -3095,7 +3095,7 @@ X-Device-Fingerprint: {...}  // 可选，设备指纹JSON`
 
 ---
 
-# Auth Service v2.1.1 - 第五部分:OAuth标准端点
+# Auth Service v2.1.2 - 第五部分:OAuth标准端点
 
 ## 5️⃣ OAuth 标准端点 (/oauth, /jwks.json, /userinfo)
 
@@ -3616,7 +3616,7 @@ app.use('/api/business-service', authenticateRequest);`
 
 ---
 
-# Auth Service v2.1.1 - 第六部分:Admin管理端点
+# Auth Service v2.1.2 - 第六部分:Admin管理端点
 
 ## 6️⃣ Admin 管理端点 (/api/auth-service/v1/admin)
 
@@ -4637,7 +4637,7 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 
 ---
 
-# Auth Service v2.1.1 - 第七部分:系统端点
+# Auth Service v2.1.2 - 第七部分:系统端点
 
 ## 7️⃣ 系统端点
 

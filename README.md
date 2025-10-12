@@ -1,4 +1,4 @@
-# Tymoe Auth Service v2.1.1
+# Tymoe Auth Service v2.1.2
 
 > **企业级身份认证与授权服务** - 基于 OAuth2/OpenID Connect 的多租户身份管理中心
 
@@ -21,7 +21,7 @@ Tymoe Auth Service 是一个企业级的身份认证与授权服务，为 Tymoe 
 
 ### 版本信息
 
-- **当前版本**: v2.1.1
+- **当前版本**: v2.1.2
 - **服务地址**: https://tymoe.com
 - **API 基础路径**: `/api/auth-service/v1`
 - **协议标准**: OAuth 2.0 + OpenID Connect 1.0
@@ -75,7 +75,7 @@ Tymoe Auth Service 是一个企业级的身份认证与授权服务，为 Tymoe 
 - ✅ 组织 CRUD（支持 MAIN、BRANCH、FRANCHISE 三种类型）
 - ✅ 账号管理（OWNER、MANAGER、STAFF 三种角色）
 - ✅ 设备管理（POS、KIOSK、TABLET 类型）
-- ✅ 产品类型隔离（beauty、fb）
+- ✅ 支持 15 种产品类型（beauty_salon、hair_salon、spa、restaurant、fast_food、cafe、beverage、home_studio、fitness、yoga_studio、retail、chinese_restaurant、clinic、liquor_store、other）
 - ✅ 组织树状结构管理
 
 ### 3. OAuth2/OIDC 标准协议
@@ -138,32 +138,43 @@ npm run build && npm start  # 生产模式
 ### 快速测试 API
 
 ```bash
-# 1. 用户注册
+# 1. 用户注册（不再需要 X-Product-Type 请求头）
 curl -X POST http://localhost:8080/api/auth-service/v1/identity/register \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@example.com",
     "password": "Test123!",
     "name": "测试用户",
-    "phone": "+8613800138000",
-    "organizationName": "测试公司",
-    "productType": "beauty"
+    "phone": "+8613800138000"
   }'
 
 # 2. 邮箱验证
-curl -X POST http://localhost:8080/api/auth-service/v1/identity/verify \
+curl -X POST http://localhost:8080/api/auth-service/v1/identity/verification \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@example.com",
     "code": "123456"
   }'
 
-# 3. 用户登录
+# 3. 用户登录（返回所有组织，不按 productType 过滤）
 curl -X POST http://localhost:8080/api/auth-service/v1/identity/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@example.com",
     "password": "Test123!"
+  }'
+
+# 3.5. 创建组织（productType 在请求体中指定）
+curl -X POST http://localhost:8080/api/auth-service/v1/organizations \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "orgName": "我的美容院",
+    "orgType": "MAIN",
+    "productType": "beauty_salon",
+    "description": "专业美容服务",
+    "location": "123 Main St",
+    "phone": "+8613800138000"
   }'
 
 # 4. 使用 Access Token 获取用户信息
@@ -417,8 +428,21 @@ model AuditLog {
 
 ```prisma
 enum ProductType {
-  beauty    // 美业
-  fb        // 餐饮
+  beauty_salon        // 美容院
+  hair_salon          // 美发店
+  spa                 // SPA会所
+  restaurant          // 餐厅
+  fast_food           // 快餐店
+  cafe                // 咖啡厅
+  beverage            // 饮品店
+  home_studio         // 家庭工作室
+  fitness             // 健身房
+  yoga_studio         // 瑜伽馆
+  retail              // 零售店
+  chinese_restaurant  // 中餐馆
+  clinic              // 诊所
+  liquor_store        // 酒类专卖店
+  other               // 其他
 }
 
 enum OrganizationType {
@@ -754,14 +778,14 @@ curl -X POST http://localhost:8080/api/auth-service/v1/admin/keys/rotate \
 
 ```bash
 # 1. 构建镜像
-docker build -t tymoe-auth-service:2.1.1 .
+docker build -t tymoe-auth-service:2.1.2 .
 
 # 2. 运行容器
 docker run -d \
   --name auth-service \
   -p 8080:8080 \
   --env-file .env \
-  tymoe-auth-service:2.1.1
+  tymoe-auth-service:2.1.2
 
 # 3. 查看日志
 docker logs -f auth-service
@@ -1070,6 +1094,56 @@ curl http://localhost:8080/metrics \
 - [Prisma Documentation](https://www.prisma.io/docs)
 
 ## 📝 更新日志
+
+### v2.1.2 (2025-10-12)
+
+**重要变更**:
+- ✅ **移除 X-Product-Type 请求头验证** - 不再要求前端请求携带 X-Product-Type 请求头
+- ✅ **扩展 ProductType 枚举** - 从 2 个值（beauty、fb）扩展到 15 个细分类型
+- ✅ **移除 Account 表的 productType 字段** - 现在从关联的 Organization 获取
+- ✅ **优化组织查询逻辑** - 查询用户组织时不再按 productType 过滤，返回所有组织
+
+**ProductType 新增类型**:
+- `beauty_salon` (美容院), `hair_salon` (美发店), `spa` (SPA会所)
+- `restaurant` (餐厅), `fast_food` (快餐店), `cafe` (咖啡厅), `beverage` (饮品店)
+- `home_studio` (家庭工作室), `fitness` (健身房), `yoga_studio` (瑜伽馆)
+- `retail` (零售店), `chinese_restaurant` (中餐馆), `clinic` (诊所)
+- `liquor_store` (酒类专卖店), `other` (其他)
+
+**数据库变更**:
+- ✅ Account 表移除 `productType` 字段
+- ✅ ProductType enum 扩展为 15 个值
+- ✅ 数据库 migration 应用成功
+
+**API 变更**:
+- ✅ **POST /organizations** - `productType` 现在通过请求体传递（而非请求头）
+- ✅ **GET /organizations** - 返回所有组织，不再按 productType 筛选
+- ✅ **POST /identity/login** - 返回用户的所有组织，不再按 productType 筛选
+- ✅ **所有 Account 相关端点** - 从 `account.organization.productType` 获取产品类型
+
+**代码改进**:
+- ✅ 移除 `src/middleware/productType.ts` 中间件
+- ✅ 修复 `src/controllers/admin.ts` 中硬编码的旧 enum 值
+- ✅ 更新 `src/services/organization.ts` 类型定义
+- ✅ 优化统计查询，支持动态 productType 统计
+
+**测试验证**:
+- ✅ TypeScript 编译检查通过
+- ✅ 服务启动成功，所有依赖正常
+- ✅ 健康检查端点 `/healthz` 正常响应
+
+**影响范围**:
+- ⚠️ **破坏性变更**: 前端需要移除所有 X-Product-Type 请求头
+- ⚠️ **API 行为变化**: 登录和组织查询现在返回所有组织（不按 productType 过滤）
+- ⚠️ **数据库变更**: 需要运行 migration 更新 ProductType enum
+
+**迁移指南**:
+1. 前端应用移除所有 `X-Product-Type` 请求头
+2. 创建组织时通过请求体传递 `productType` 字段
+3. Account 相关逻辑改为从 `account.organization.productType` 获取产品类型
+4. 登录后根据 `organization.productType` 进行前端路由和业务逻辑处理
+
+---
 
 ### v2.1.1 (2025-10-10)
 
