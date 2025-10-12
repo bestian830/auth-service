@@ -143,19 +143,59 @@ restart_service() {
 setup_ssl() {
     log_info "Setting up SSL certificates..."
 
-    # 首先启动nginx和certbot来获取证书
-    docker-compose -f ${COMPOSE_FILE} up -d nginx certbot
+    # 检查域名是否已配置
+    log_info "Please ensure tymoe.com is pointing to this server's IP address"
+    read -p "Is the domain configured? (y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_warning "Domain not configured. Using self-signed certificate for testing..."
+        setup_self_signed_cert
+        return
+    fi
 
-    # 等待证书生成
-    log_info "Waiting for SSL certificate generation..."
-    sleep 30
+    # 确保 nginx 运行（用于 ACME 验证）
+    docker-compose -f ${COMPOSE_FILE} up -d nginx
+
+    # 使用 certbot 申请证书
+    log_info "Requesting SSL certificate from Let's Encrypt..."
+    docker-compose -f ${COMPOSE_FILE} run --rm certbot certonly \
+        --webroot \
+        --webroot-path=/var/www/certbot \
+        --email admin@tymoe.com \
+        --agree-tos \
+        --no-eff-email \
+        -d tymoe.com \
+        -d www.tymoe.com
 
     # 检查证书是否生成成功
     if docker exec tymoe-nginx test -f /etc/letsencrypt/live/tymoe.com/fullchain.pem; then
-        log_success "SSL certificates generated successfully"
+        log_success "SSL certificates obtained successfully"
+        # 重启 nginx 加载证书
+        docker-compose -f ${COMPOSE_FILE} restart nginx
+        # 启动 certbot 自动续期服务
+        docker-compose -f ${COMPOSE_FILE} up -d certbot
     else
-        log_warning "SSL certificates not found, will use HTTP only"
+        log_error "Failed to obtain SSL certificates"
+        log_warning "Using self-signed certificate for testing..."
+        setup_self_signed_cert
     fi
+}
+
+# 创建自签名证书（仅用于测试）
+setup_self_signed_cert() {
+    log_info "Generating self-signed certificate..."
+
+    docker run --rm -v certbot_conf:/etc/letsencrypt alpine sh -c "
+        apk add --no-cache openssl && \
+        mkdir -p /etc/letsencrypt/live/tymoe.com && \
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout /etc/letsencrypt/live/tymoe.com/privkey.pem \
+            -out /etc/letsencrypt/live/tymoe.com/fullchain.pem \
+            -subj '/CN=tymoe.com'
+    "
+
+    log_success "Self-signed certificate created"
+    log_warning "Browser will show security warning. Use for testing only!"
 }
 
 # 完整重新部署
