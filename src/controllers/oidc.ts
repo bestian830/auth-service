@@ -96,22 +96,11 @@ export async function token(req: Request, res: Response){
             status: org.status
           }));
 
-          // User 后台登录的权限列表
-          const userPermissions = [
-            'read:all_orgs',
-            'manage:subscriptions',
-            'create:owner',
-            'create:manager',
-            'manage:accounts',
-            'manage:devices'
-          ];
-
           at = await signAccessToken({
             sub: user.id,
             email: user.email,
             userType: 'USER',
             organizations,
-            permissions: userPermissions,
             aud: clientId!,
           });
         }
@@ -142,12 +131,6 @@ export async function token(req: Request, res: Response){
             throw { code: 'account_not_found' };
           }
 
-          // Account 后台登录的权限根据角色确定
-          const accountPermissions =
-            account.accountType === 'OWNER' ? ['manage:org', 'manage:staff', 'manage:devices'] :
-            account.accountType === 'MANAGER' ? ['manage:org', 'manage:staff'] :
-            ['read:org'];
-
           // 构建完整的 organization 对象
           const organization = {
             id: account.organization.id,
@@ -166,7 +149,6 @@ export async function token(req: Request, res: Response){
             username: account.username || undefined,
             employeeNumber: account.employeeNumber,
             organization,
-            permissions: accountPermissions,
             aud: clientId!,
           });
         } else {
@@ -202,9 +184,6 @@ export async function token(req: Request, res: Response){
       if (pin_code && deviceId && !email && !username && !password) {
         const { account: acc, device } = await accountService.authenticatePOS(pin_code, deviceId);
 
-        // POS 登录的权限（简化版，只有基本 POS 操作权限）
-        const posPermissions = ['use:pos'];
-
         // 构建完整的 organization 对象
         const organization = {
           id: device.organization.id,
@@ -223,7 +202,6 @@ export async function token(req: Request, res: Response){
           employeeNumber: acc.employeeNumber,
           organization,
           deviceId,
-          permissions: posPermissions,
           aud: clientId!,
           ttlSec: 16200, // 4.5 小时
         });
@@ -244,12 +222,6 @@ export async function token(req: Request, res: Response){
 
         const acc = await accountService.authenticateBackend(username, password);
 
-        // Account 后台登录的权限根据角色确定
-        const accountPermissions =
-          acc.accountType === 'OWNER' ? ['manage:org', 'manage:staff', 'manage:devices'] :
-          acc.accountType === 'MANAGER' ? ['manage:org', 'manage:staff'] :
-          ['read:org'];  // STAFF (但 STAFF 不应该能后台登录)
-
         // 构建完整的 organization 对象
         const organization = {
           id: acc.organization.id,
@@ -268,7 +240,6 @@ export async function token(req: Request, res: Response){
           username: acc.username!,
           employeeNumber: acc.employeeNumber,
           organization,
-          permissions: accountPermissions,
           aud: clientId!,
         });
         const { refreshId } = await issueRefreshFamily({ accountId: acc.id, clientId: clientId!, organizationId: acc.orgId });
@@ -317,22 +288,11 @@ export async function token(req: Request, res: Response){
           status: org.status
         }));
 
-        // User 后台登录的权限列表
-        const userPermissions = [
-          'read:all_orgs',
-          'manage:subscriptions',
-          'create:owner',
-          'create:manager',
-          'manage:accounts',
-          'manage:devices'
-        ];
-
         const at = await signAccessToken({
           sub: user.id,
           email: user.email,
           userType: 'USER',
           organizations,
-          permissions: userPermissions,
           aud: clientId!,
         });
         const { refreshId } = await issueRefreshFamily({ userId: user.id, clientId: clientId!, organizationId: primaryOrgId ?? undefined });
