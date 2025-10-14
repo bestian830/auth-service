@@ -71,23 +71,30 @@ export async function token(req: Request, res: Response){
             throw { code: 'user_not_found' };
           }
 
-          // 推断 productType：从 rotated.organizationId 查询
-          let productType = 'beauty';  // 默认值
-          if (rotated.organizationId) {
-            const org = await prisma.organization.findUnique({
-              where: { id: rotated.organizationId },
-              select: { productType: true }
-            });
-            productType = org?.productType || 'beauty';
-          }
-
-          // 查询该用户的所有最新组织列表（不按productType筛选，返回所有）
+          // 查询该用户的所有最新组织列表（完整信息，不按productType筛选，返回所有）
           const orgs = await prisma.organization.findMany({
             where: { userId: user.id, status: 'ACTIVE' },
-            select: { id: true },
+            select: {
+              id: true,
+              orgName: true,
+              orgType: true,
+              productType: true,
+              parentOrgId: true,
+              status: true
+            },
             orderBy: { createdAt: 'asc' }
           });
-          const organizationIds = orgs.map(o => o.id);
+
+          // 构建完整的 organizations 数组
+          const organizations = orgs.map(org => ({
+            id: org.id,
+            orgName: org.orgName,
+            orgType: org.orgType,
+            productType: org.productType,
+            parentOrgId: org.parentOrgId,
+            role: 'USER' as const,
+            status: org.status
+          }));
 
           // User 后台登录的权限列表
           const userPermissions = [
@@ -103,8 +110,7 @@ export async function token(req: Request, res: Response){
             sub: user.id,
             email: user.email,
             userType: 'USER',
-            productType,
-            organizationIds,
+            organizations,
             permissions: userPermissions,
             aud: clientId!,
           });
@@ -121,7 +127,12 @@ export async function token(req: Request, res: Response){
               orgId: true,
               organization: {
                 select: {
-                  productType: true
+                  id: true,
+                  orgName: true,
+                  orgType: true,
+                  productType: true,
+                  parentOrgId: true,
+                  status: true
                 }
               }
             }
@@ -137,14 +148,24 @@ export async function token(req: Request, res: Response){
             account.accountType === 'MANAGER' ? ['manage:org', 'manage:staff'] :
             ['read:org'];
 
+          // 构建完整的 organization 对象
+          const organization = {
+            id: account.organization.id,
+            orgName: account.organization.orgName,
+            orgType: account.organization.orgType,
+            productType: account.organization.productType,
+            parentOrgId: account.organization.parentOrgId,
+            role: account.accountType as 'OWNER' | 'MANAGER' | 'STAFF',
+            status: account.organization.status
+          };
+
           at = await signAccessToken({
             sub: account.id,
             userType: 'ACCOUNT',
             accountType: account.accountType as any,
             username: account.username || undefined,
             employeeNumber: account.employeeNumber,
-            productType: account.organization.productType as string,
-            organizationId: account.orgId,
+            organization,
             permissions: accountPermissions,
             aud: clientId!,
           });
@@ -183,15 +204,24 @@ export async function token(req: Request, res: Response){
 
         // POS 登录的权限（简化版，只有基本 POS 操作权限）
         const posPermissions = ['use:pos'];
-        const productType = device.organization.productType;
+
+        // 构建完整的 organization 对象
+        const organization = {
+          id: device.organization.id,
+          orgName: device.organization.orgName,
+          orgType: device.organization.orgType,
+          productType: device.organization.productType,
+          parentOrgId: device.organization.parentOrgId,
+          role: acc.accountType as 'OWNER' | 'MANAGER' | 'STAFF',
+          status: device.organization.status
+        };
 
         const at = await signAccessToken({
           sub: acc.id,
           userType: 'ACCOUNT',
           accountType: acc.accountType as any,
           employeeNumber: acc.employeeNumber,
-          productType,
-          organizationId: acc.orgId,
+          organization,
           deviceId,
           permissions: posPermissions,
           aud: clientId!,
@@ -220,7 +250,16 @@ export async function token(req: Request, res: Response){
           acc.accountType === 'MANAGER' ? ['manage:org', 'manage:staff'] :
           ['read:org'];  // STAFF (但 STAFF 不应该能后台登录)
 
-        const productType = acc.organization.productType;
+        // 构建完整的 organization 对象
+        const organization = {
+          id: acc.organization.id,
+          orgName: acc.organization.orgName,
+          orgType: acc.organization.orgType,
+          productType: acc.organization.productType,
+          parentOrgId: acc.organization.parentOrgId,
+          role: acc.accountType as 'OWNER' | 'MANAGER' | 'STAFF',
+          status: acc.organization.status
+        };
 
         const at = await signAccessToken({
           sub: acc.id,
@@ -228,8 +267,7 @@ export async function token(req: Request, res: Response){
           accountType: acc.accountType as any,
           username: acc.username!,
           employeeNumber: acc.employeeNumber,
-          productType,
-          organizationId: acc.orgId,
+          organization,
           permissions: accountPermissions,
           aud: clientId!,
         });
@@ -253,17 +291,31 @@ export async function token(req: Request, res: Response){
         if (!ok) return res.status(401).json({ error: 'invalid_grant' });
         if (!user.emailVerifiedAt) return res.status(403).json({ error: 'email_not_verified' });
 
-        // 查询该用户的所有组织 ID（不按productType筛选，返回所有）
+        // 查询该用户的所有组织（完整信息，不按productType筛选，返回所有）
         const orgs = await prisma.organization.findMany({
           where: { userId: user.id, status: 'ACTIVE' },
-          select: { id: true, productType: true },
+          select: {
+            id: true,
+            orgName: true,
+            orgType: true,
+            productType: true,
+            parentOrgId: true,
+            status: true
+          },
           orderBy: { createdAt: 'asc' }
         });
-        const organizationIds = orgs.map(o => o.id);
-        const primaryOrgId = organizationIds[0] || null;
+        const primaryOrgId = orgs[0]?.id || null;
 
-        // 从第一个组织获取productType作为默认值
-        const productType = orgs[0]?.productType || 'beauty';
+        // 构建完整的 organizations 数组
+        const organizations = orgs.map(org => ({
+          id: org.id,
+          orgName: org.orgName,
+          orgType: org.orgType,
+          productType: org.productType,
+          parentOrgId: org.parentOrgId,
+          role: 'USER' as const,
+          status: org.status
+        }));
 
         // User 后台登录的权限列表
         const userPermissions = [
@@ -279,8 +331,7 @@ export async function token(req: Request, res: Response){
           sub: user.id,
           email: user.email,
           userType: 'USER',
-          productType,
-          organizationIds,
+          organizations,
           permissions: userPermissions,
           aud: clientId!,
         });
@@ -339,18 +390,19 @@ export async function userinfo(req: Request, res: Response){
         });
       }
 
-      // 查询该用户的所有组织（从 token 中的 productType 获取）
-      const productType = claims.productType || 'beauty';
+      // 查询该用户的所有组织（完整信息，不按 productType 筛选，返回所有）
       const organizations = await prisma.organization.findMany({
         where: {
           userId: sub,
-          status: 'ACTIVE',
-          productType: productType as any
+          status: 'ACTIVE'
         },
         select: {
           id: true,
           orgName: true,
-          orgType: true
+          orgType: true,
+          productType: true,
+          parentOrgId: true,
+          status: true
         },
         orderBy: { createdAt: 'asc' }
       });
@@ -362,13 +414,16 @@ export async function userinfo(req: Request, res: Response){
           email: user.email,
           name: user.name,
           phone: user.phone,
-          productType,
           emailVerified: !!user.emailVerifiedAt,
           createdAt: user.createdAt,
           organizations: organizations.map(org => ({
             id: org.id,
             orgName: org.orgName,
-            orgType: org.orgType
+            orgType: org.orgType,
+            productType: org.productType,
+            parentOrgId: org.parentOrgId,
+            role: 'USER',
+            status: org.status
           }))
         }
       });
@@ -393,7 +448,9 @@ export async function userinfo(req: Request, res: Response){
               id: true,
               orgName: true,
               orgType: true,
-              productType: true
+              productType: true,
+              parentOrgId: true,
+              status: true
             }
           }
         }
@@ -413,7 +470,6 @@ export async function userinfo(req: Request, res: Response){
           username: account.username,
           employeeNumber: account.employeeNumber,
           accountType: account.accountType,
-          productType: account.organization.productType,
           name: account.name,
           email: account.email,
           phone: account.phone,
@@ -422,7 +478,11 @@ export async function userinfo(req: Request, res: Response){
           organization: {
             id: account.organization.id,
             orgName: account.organization.orgName,
-            orgType: account.organization.orgType
+            orgType: account.organization.orgType,
+            productType: account.organization.productType,
+            parentOrgId: account.organization.parentOrgId,
+            role: account.accountType,
+            status: account.organization.status
           }
         }
       });

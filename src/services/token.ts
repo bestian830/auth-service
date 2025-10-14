@@ -14,15 +14,35 @@ export type AccessClaims = {
   sub: string;
   email?: string;  // User 登录时包含
   userType: 'USER' | 'ACCOUNT';
-  productType?: string;  // 'beauty' | 'fb'
   accountType?: 'OWNER' | 'MANAGER' | 'STAFF';
   username?: string;  // Account 后台登录时包含
   employeeNumber?: string;
-  organizationIds?: string[];  // User 登录时包含所有组织（数组）
+
+  // USER 专属字段
+  organizations?: Array<{
+    id: string;
+    orgName: string;
+    orgType: string;
+    productType: string;
+    parentOrgId: string | null;
+    role: 'USER';
+    status: string;
+  }>;
+
+  // ACCOUNT 专属字段
+  organization?: {
+    id: string;
+    orgName: string;
+    orgType: string;
+    productType: string;
+    parentOrgId: string | null;
+    role: 'OWNER' | 'MANAGER' | 'STAFF';
+    status: string;
+  };
+
   permissions?: string[];  // 权限列表
   roles?: string[];  // 角色列表（已废弃，保留向后兼容）
   scopes?: string[];  // OAuth scopes（已废弃，保留向后兼容）
-  organizationId?: string | null;  // Account 登录时为单个组织 ID
   deviceId?: string | null;  // POS 登录时包含
 };
 
@@ -50,15 +70,35 @@ export async function signAccessToken(payload: {
   sub: string;
   email?: string;
   userType: 'USER' | 'ACCOUNT';
-  productType?: string;
   accountType?: 'OWNER' | 'MANAGER' | 'STAFF';
   username?: string;
   employeeNumber?: string;
-  organizationIds?: string[];
+
+  // USER 专属字段
+  organizations?: Array<{
+    id: string;
+    orgName: string;
+    orgType: string;
+    productType: string;
+    parentOrgId: string | null;
+    role: 'USER';
+    status: string;
+  }>;
+
+  // ACCOUNT 专属字段
+  organization?: {
+    id: string;
+    orgName: string;
+    orgType: string;
+    productType: string;
+    parentOrgId: string | null;
+    role: 'OWNER' | 'MANAGER' | 'STAFF';
+    status: string;
+  };
+
   permissions?: string[];
   roles?: string[];
   scopes?: string[];
-  organizationId?: string | null;
   deviceId?: string | null; // POS 登录专用
   aud?: string | string[];
   ttlSec?: number; // 可选：自定义有效期（秒），用于 POS 4.5 小时等场景
@@ -66,22 +106,21 @@ export async function signAccessToken(payload: {
   const iat = nowSec();
   const exp = iat + Number((payload.ttlSec ?? env.accessTtlSec) || 1800);
   const jti = crypto.randomUUID();
-  const aud = resolveAudience(payload.aud, payload.organizationId || undefined);
+  const aud = resolveAudience(payload.aud, payload.organization?.id || undefined);
 
   const claims: AccessClaims = {
     jti, iat, exp, iss: env.issuerUrl, aud,
     sub: payload.sub,
     email: payload.email,
     userType: payload.userType,
-    productType: payload.productType,
     accountType: payload.accountType,
     username: payload.username,
     employeeNumber: payload.employeeNumber,
-    organizationIds: payload.organizationIds,
+    organizations: payload.organizations,
+    organization: payload.organization,
     permissions: payload.permissions,
     roles: payload.roles,
     scopes: payload.scopes,
-    organizationId: payload.organizationId ?? null,
     deviceId: payload.deviceId ?? null,
   };
 

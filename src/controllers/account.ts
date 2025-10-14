@@ -456,9 +456,9 @@ export async function listAccounts(req: Request, res: Response) {
     const claims = getClaims(req);
     let { orgId, accountType, status } = req.query as any;
 
-    // 对于 ACCOUNT 类型的 token，如果没有提供 orgId，则使用 token 中的 organizationId
+    // 对于 ACCOUNT 类型的 token，如果没有提供 orgId，则使用 token 中的 organization.id
     if (!orgId && claims.userType === 'ACCOUNT') {
-      orgId = claims.organizationId;
+      orgId = claims.organization?.id;
     }
 
     // 对于 USER 类型的 token，必须提供 orgId（因为 User 可能有多个组织）
