@@ -40,7 +40,6 @@ export type AccessClaims = {
     status: string;
   };
 
-  permissions?: string[];  // 权限列表
   roles?: string[];  // 角色列表（已废弃，保留向后兼容）
   scopes?: string[];  // OAuth scopes（已废弃，保留向后兼容）
   deviceId?: string | null;  // POS 登录时包含
@@ -96,7 +95,6 @@ export async function signAccessToken(payload: {
     status: string;
   };
 
-  permissions?: string[];
   roles?: string[];
   scopes?: string[];
   deviceId?: string | null; // POS 登录专用
@@ -118,7 +116,6 @@ export async function signAccessToken(payload: {
     employeeNumber: payload.employeeNumber,
     organizations: payload.organizations,
     organization: payload.organization,
-    permissions: payload.permissions,
     roles: payload.roles,
     scopes: payload.scopes,
     deviceId: payload.deviceId ?? null,
