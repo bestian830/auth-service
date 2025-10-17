@@ -2,6 +2,7 @@
 import { Device, Prisma } from '@prisma/client';
 import { prisma } from '../infra/prisma.js';
 import { audit } from '../middleware/audit.js';
+import { deviceSessionService } from './deviceSession.js';
 
 /**
  * Device Service
@@ -124,12 +125,13 @@ export class DeviceService {
 
   /**
    * 激活设备（id+activationCode）
+   * 支持幂等操作：PENDING 或 ACTIVE 设备都可以激活
+   * @returns { device, sessionToken } sessionToken 只返回一次
    */
   async activateDevice(
     deviceId: string,
-    activationCode: string,
-    deviceFingerprint?: any
-  ): Promise<Device> {
+    activationCode: string
+  ): Promise<{ device: Device; sessionToken: string }> {
     // 1. 校验设备与激活码匹配
     const device = await prisma.device.findFirst({
       where: { id: deviceId, activationCode },
@@ -145,53 +147,35 @@ export class DeviceService {
       throw new Error('org_inactive');
     }
 
-    // 3. 状态校验
-    if (device.status !== 'PENDING') {
-      throw new Error('device_already_activated');
-    }
+    // 3. 支持幂等激活：PENDING 或 ACTIVE 都可以激活
+    // 不再检查状态，允许重复激活
 
     const now = new Date();
 
-    // 4. 更新为 ACTIVE（长期有效，除非被手动删除）
+    // 4. 创建或更新 DeviceSession（幂等）
+    const { sessionToken, session } = await deviceSessionService.createOrUpdateSession(deviceId);
+
+    // 5. 更新设备为 ACTIVE（如果还不是）
     const updated = await prisma.device.update({
       where: { id: device.id },
       data: {
         status: 'ACTIVE',
-        activatedAt: now,
-        lastActiveAt: now,
-        deviceFingerprint: deviceFingerprint || Prisma.DbNull,
+        activatedAt: device.status === 'PENDING' ? now : device.activatedAt, // 保留首次激活时间
       },
     });
 
-    // 5. 审计
+    // 6. 审计
     audit('device_activated', {
       deviceId: device.id,
       orgId: device.orgId,
       deviceType: device.deviceType,
       activatedAt: now.toISOString(),
+      isReactivation: device.status === 'ACTIVE',
     });
 
-    return updated;
+    return { device: updated, sessionToken };
   }
 
-  /**
-   * 更新设备活跃时间
-   */
-  async updateLastActive(deviceId: string): Promise<void> {
-    const device = await prisma.device.findUnique({ where: { id: deviceId } });
-    if (!device) return;
-
-    const now = new Date();
-    await prisma.device.update({
-      where: { id: deviceId },
-      data: { lastActiveAt: now },
-    });
-
-    audit('device_last_active_updated', {
-      deviceId,
-      lastActiveAt: now.toISOString(),
-    });
-  }
 
   /**
    * 更新激活码（仅 ACTIVE 设备；重置为 PENDING 并重置激活相关字段，可选更新设备名称）
@@ -240,7 +224,10 @@ export class DeviceService {
     // 4. 生成新激活码（唯一）
     const newCode = await this.generateUniqueActivationCode();
 
-    // 5. 回退为 PENDING 并重置激活相关字段（deviceName可选更新）
+    // 5. 删除旧的 DeviceSession（如果存在）
+    await deviceSessionService.deleteSession(deviceId);
+
+    // 6. 回退为 PENDING 并重置激活相关字段（deviceName可选更新）
     const updated = await prisma.device.update({
       where: { id: deviceId },
       data: {
@@ -248,12 +235,10 @@ export class DeviceService {
         activationCode: newCode,
         deviceName: finalDeviceName,
         activatedAt: null,
-        lastActiveAt: null,
-        deviceFingerprint: Prisma.DbNull,
       },
     });
 
-    // 6. 审计
+    // 7. 审计
     audit('device_activation_code_updated', {
       deviceId,
       orgId,

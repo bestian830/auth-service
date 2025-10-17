@@ -24,9 +24,9 @@ export function requireAccountType(...allowed: Array<'OWNER' | 'MANAGER' | 'STAF
 export function requireOrgAccess(paramName: string = 'orgId') {
   return (req: Request, res: Response, next: NextFunction) => {
     const claims = (req as any).claims || {};
-    const orgId = (req.params as any)[paramName] || (req.query as any)[paramName] || (req.body as any)[paramName] || claims.organizationId;
+    const orgId = (req.params as any)[paramName] || (req.query as any)[paramName] || (req.body as any)[paramName] || claims.organization?.id;
     if (!orgId) return res.status(400).json({ error: 'organization_required' });
-    if (claims.userType === 'ACCOUNT' && claims.organizationId !== orgId) {
+    if (claims.userType === 'ACCOUNT' && claims.organization?.id !== orgId) {
       return res.status(403).json({ error: 'org_mismatch' });
     }
     next();

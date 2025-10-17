@@ -297,15 +297,17 @@ export class AccountService {
   }
 
   /**
-   * POS登录认证（pinCode + deviceId）
+   * POS登录认证（pinCode + deviceId + sessionToken）
    * 适用所有类型的Account
    * @param pinCode - PIN码
    * @param deviceId - 设备ID
+   * @param sessionToken - 会话令牌
    * @returns 账号和设备信息
    */
   async authenticatePOS(
     pinCode: string,
-    deviceId: string
+    deviceId: string,
+    sessionToken: string
   ): Promise<{
     account: Account;
     device: Device & { organization: any };
@@ -324,7 +326,15 @@ export class AccountService {
       throw new Error('device_not_active');
     }
 
-    // 2. 查询该组织下所有ACTIVE账号，逐一验证PIN码（不再按productType筛选）
+    // 2. 验证 sessionToken（新增）
+    const { deviceSessionService } = await import('./deviceSession.js');
+    const isValidSession = await deviceSessionService.validateSessionToken(deviceId, sessionToken);
+    
+    if (!isValidSession) {
+      throw new Error('invalid_session');
+    }
+
+    // 3. 查询该组织下所有ACTIVE账号，逐一验证PIN码（不再按productType筛选）
     const accounts = await prisma.account.findMany({
       where: {
         orgId: device.orgId,
@@ -345,7 +355,7 @@ export class AccountService {
       throw new Error('invalid_credentials');
     }
 
-    // 3. 检查账号是否锁定（若锁定已过期则即时解锁）
+    // 4. 检查账号是否锁定（若锁定已过期则即时解锁）
     const now = new Date();
     if (account.lockedUntil && account.lockedUntil <= now) {
       await prisma.account.update({
@@ -365,15 +375,18 @@ export class AccountService {
       throw new Error('account_locked');
     }
 
-    // 4. 检查组织状态
+    // 5. 检查组织状态
     if (device.organization.status !== 'ACTIVE') {
       throw new Error('organization_inactive');
     }
 
-    // 5. 登录成功后更新登录状态（重置失败计数并清锁）
+    // 6. 登录成功后更新登录状态（重置失败计数并清锁）
     await this.updateLastLogin(account.id);
 
-    // 6. 返回账号和设备信息
+    // 7. 更新会话最后活跃时间
+    await deviceSessionService.updateLastActive(deviceId);
+
+    // 8. 返回账号和设备信息
     return { account, device };
   }
 

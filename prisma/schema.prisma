@@ -145,25 +145,39 @@ enum AccountStatus {
 
 // Device表 - 设备管理
 model Device {
-  id                String       @id @default(uuid())
-  orgId             String
-  deviceType        DeviceType
-  deviceName        String?
-  activationCode    String       @unique
-  status            DeviceStatus @default(PENDING)
-  activatedAt       DateTime?
-  lastActiveAt      DateTime?
-  deviceFingerprint Json?
+  id             String       @id @default(uuid())
+  orgId          String
+  deviceType     DeviceType
+  deviceName     String?
+  activationCode String       @unique
+  status         DeviceStatus @default(PENDING)
+  activatedAt    DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization Organization @relation(fields: [orgId], references: [id])
+  organization Organization   @relation(fields: [orgId], references: [id])
+  session      DeviceSession?
   auditLogs    AuditLog[]
 
   @@index([orgId])
   @@index([status])
   @@index([activationCode])
+}
+
+// DeviceSession表 - 设备会话管理
+model DeviceSession {
+  id               String   @id @default(uuid())
+  deviceId         String   @unique // 一对一关系：一个设备只能有一个会话
+  sessionTokenHash String   @unique // SHA-256 哈希值
+  status           String   @default("ACTIVE") // 简化设计，只有 ACTIVE 状态
+  activatedAt      DateTime @default(now())
+  lastActiveAt     DateTime @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([sessionTokenHash])
+  @@index([deviceId])
 }
 
 enum DeviceType {

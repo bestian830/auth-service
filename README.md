@@ -1,4 +1,4 @@
-# Tymoe Auth Service v2.1.2
+# Auth Service v2.1.2
 
 > **企业级身份认证与授权服务** - 基于 OAuth2/OpenID Connect 的多租户身份管理中心
 
@@ -17,7 +17,7 @@
 
 ## 🎯 系统概述
 
-Tymoe Auth Service 是一个企业级的身份认证与授权服务，为 Tymoe 生态系统中的所有业务服务（美业 SaaS、餐饮 SaaS 等）提供统一的身份管理和访问控制。
+Auth Service 是一个企业级的身份认证与授权服务，为生态系统中的所有业务服务（美业 SaaS、餐饮 SaaS 等）提供统一的身份管理和访问控制。
 
 ### 版本信息
 
@@ -42,16 +42,16 @@ Tymoe Auth Service 是一个企业级的身份认证与授权服务，为 Tymoe 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                      前端应用层                           │
-│   (美业SaaS)  (餐饮SaaS)  (后台管理)  (移动App)          │
+│   (美业SaaS)  (餐饮SaaS)  (后台管理)  (移动App)            │
 └────────────────────┬────────────────────────────────────┘
                      │
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│              Tymoe Auth Service (8080)                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
-│  │ Identity │  │   OAuth  │  │  Orgs    │  │  Admin  │ │
-│  │   API    │  │   API    │  │   API    │  │   API   │ │
-│  └──────────┘  └──────────┘  └──────────┘  └─────────┘ │
+│               Auth Service (8080)                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐  │
+│  │ Identity │  │   OAuth  │  │  Orgs    │  │  Admin  │  │
+│  │   API    │  │   API    │  │   API    │  │   API   │  │ 
+│  └──────────┘  └──────────┘  └──────────┘  └─────────┘  │
 └────────────────────┬────────────────────────────────────┘
                      │
         ┌────────────┼────────────┐
@@ -1181,11 +1181,11 @@ curl http://localhost:8080/metrics \
 
 如有问题或建议，请联系开发团队：
 
-- **Email**: dev@tymoe.com
+- **Email**: dev@tymoe.com (not exist rn)
 - **Slack**: #auth-service
-- **文档**: https://docs.tymoe.com/auth-service
+- **文档**: https://docs.tymoe.com/auth-service (not exist rn)
 
 ---
 
-**License**: MIT
-**Copyright**: © 2025 Tymoe Technologies
+**License**: Ryan DIY
+**Copyright**: © 2025 Tymoe Technologies (not exist rn)

@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../infra/prisma.js';
 import { deviceService } from '../services/device.js';
+import { deviceSessionService } from '../services/deviceSession.js';
 import { audit } from '../middleware/audit.js';
 
 function getClaims(req: Request) {
@@ -109,7 +110,6 @@ export async function createDevice(req: Request, res: Response) {
 // 4.2 激活设备 - 无需认证
 export async function activateDevice(req: Request, res: Response) {
   try {
-    const deviceFingerprint = req.headers['x-device-fingerprint'] || req.headers['X-Device-Fingerprint'];
     const { deviceId, activationCode } = req.body || {};
 
     // 验证必填字段
@@ -120,18 +120,8 @@ export async function activateDevice(req: Request, res: Response) {
       });
     }
 
-    // 解析deviceFingerprint（如果有）
-    let fingerprintJson = null;
-    if (deviceFingerprint) {
-      try {
-        fingerprintJson = typeof deviceFingerprint === 'string' ? JSON.parse(deviceFingerprint) : deviceFingerprint;
-      } catch (e) {
-        // 忽略解析错误
-      }
-    }
-
-    // 激活设备（不需要传productType，从device的organization获取）
-    const device = await deviceService.activateDevice(deviceId, activationCode, fingerprintJson);
+    // 激活设备（支持幂等操作）
+    const { device, sessionToken } = await deviceService.activateDevice(deviceId, activationCode);
 
     // 获取组织名称
     const org = await prisma.organization.findUnique({ where: { id: device.orgId } });
@@ -146,32 +136,22 @@ export async function activateDevice(req: Request, res: Response) {
         deviceType: device.deviceType,
         deviceName: device.deviceName,
         status: device.status,
-        activatedAt: device.activatedAt
-      }
+        activatedAt: device.activatedAt,
+        sessionToken // 返回 sessionToken（只返回一次）
+      },
+      warning: 'Please save the sessionToken securely. Store it in localStorage and IndexedDB for backup.'
     });
   } catch (e: any) {
     if (e?.message === 'invalid_device_or_code') {
       return res.status(404).json({
         error: 'invalid_device_or_code',
-        detail: 'Invalid deviceId or activationCode, or device already activated'
-      });
-    }
-    if (e?.message === 'device_already_activated') {
-      return res.status(400).json({
-        error: 'device_already_activated',
-        detail: 'This device has already been activated'
+        detail: 'Invalid deviceId or activationCode'
       });
     }
     if (e?.message === 'org_inactive') {
       return res.status(403).json({
         error: 'org_inactive',
         detail: 'The organization is inactive. Please contact support.'
-      });
-    }
-    if (e?.message === 'product_type_mismatch') {
-      return res.status(403).json({
-        error: 'product_type_mismatch',
-        detail: 'Product type does not match organization'
       });
     }
     return res.status(400).json({ error: 'invalid_request', detail: e?.message || 'Invalid request' });
@@ -326,7 +306,6 @@ export async function listDevices(req: Request, res: Response) {
         deviceName: true,
         status: true,
         activatedAt: true,
-        lastActiveAt: true,
         createdAt: true
       }
     });
@@ -391,8 +370,6 @@ export async function getDevice(req: Request, res: Response) {
         deviceName: device.deviceName,
         status: device.status,
         activatedAt: device.activatedAt,
-        lastActiveAt: device.lastActiveAt,
-        deviceFingerprint: device.deviceFingerprint,
         createdAt: device.createdAt,
         updatedAt: device.updatedAt
       }
@@ -515,6 +492,79 @@ export async function deleteDevice(req: Request, res: Response) {
     return res.json({
       success: true,
       message: 'Device deleted successfully'
+    });
+  } catch (e) {
+    return res.status(500).json({ error: 'server_error' });
+  }
+}
+
+// 4.8 查询设备会话状态 - 需要认证
+export async function getDeviceSession(req: Request, res: Response) {
+  try {
+    const claims = getClaims(req);
+    const { deviceId } = req.params as any;
+
+    // 查询设备（不包括DELETED）
+    const device = await prisma.device.findFirst({
+      where: {
+        id: deviceId,
+        status: { notIn: ['DELETED'] }
+      },
+      include: { organization: true }
+    });
+
+    if (!device) {
+      return res.status(404).json({ error: 'device_not_found', detail: 'Device not found' });
+    }
+
+    // 权限验证
+    if (claims.userType === 'USER') {
+      if (device.organization?.userId !== claims.sub) {
+        return forbid(res);
+      }
+    } else if (claims.userType === 'ACCOUNT') {
+      const account = await getCallerAccount(claims);
+      if (!account || account.orgId !== device.orgId) {
+        return forbid(res);
+      }
+      if (account.accountType === 'STAFF') {
+        return res.status(403).json({
+          error: 'staff_no_backend_access',
+          detail: 'Staff accounts do not have backend access'
+        });
+      }
+    } else {
+      return forbid(res);
+    }
+
+    // 查询 DeviceSession
+    const session = await deviceSessionService.getSession(deviceId);
+
+    if (!session) {
+      return res.json({
+        success: true,
+        data: {
+          deviceId: device.id,
+          deviceName: device.deviceName,
+          hasActiveSession: false,
+          message: 'No active session found. Device needs activation.'
+        }
+      });
+    }
+
+    // 返回会话信息（不返回 sessionTokenHash）
+    return res.json({
+      success: true,
+      data: {
+        deviceId: device.id,
+        deviceName: device.deviceName,
+        hasActiveSession: true,
+        session: {
+          status: session.status,
+          activatedAt: session.activatedAt,
+          lastActiveAt: session.lastActiveAt
+        }
+      }
     });
   } catch (e) {
     return res.status(500).json({ error: 'server_error' });
