@@ -85,15 +85,15 @@ build_image() {
 
 # 运行数据库迁移
 run_migration() {
-    log_info "Running database migration..."
+    log_info "Running database schema sync..."
 
-    # 临时运行容器来执行迁移
+    # 临时运行容器来同步数据库结构 (使用 db push 而不是 migrate)
     docker run --rm \
         --env-file .env \
         ${IMAGE_NAME}:latest \
-        sh -c "npx prisma migrate deploy"
+        sh -c "npx prisma db push --accept-data-loss --skip-generate"
 
-    log_success "Database migration completed"
+    log_success "Database schema sync completed"
 }
 
 # 部署服务
