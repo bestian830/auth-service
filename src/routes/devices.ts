@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createDevice, activateDevice, listDevices, getDevice, updateDevice, deleteDevice, updateActivationCode } from '../controllers/device.js';
+import { createDevice, activateDevice, listDevices, getDevice, updateDevice, deleteDevice, updateActivationCode, getDeviceSession } from '../controllers/device.js';
 import { requireBearer } from '../middleware/bearer.js';
 
 const router = Router();
@@ -11,6 +11,7 @@ router.post('/activate', activateDevice);
 router.post('/', requireBearer, createDevice);
 router.get('/', requireBearer, listDevices);
 router.get('/:deviceId', requireBearer, getDevice);
+router.get('/:deviceId/session', requireBearer, getDeviceSession);
 router.patch('/:deviceId', requireBearer, updateDevice);
 router.delete('/:deviceId', requireBearer, deleteDevice);
 router.post('/:deviceId/update-activation-code', requireBearer, updateActivationCode);

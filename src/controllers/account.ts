@@ -126,10 +126,13 @@ export async function loginBackend(req: Request, res: Response) {
 export async function loginPOS(req: Request, res: Response) {
   try {
     const deviceId = (req.headers['x-device-id'] || req.headers['X-Device-ID']) as string | undefined;
-    const deviceFingerprint = (req.headers['x-device-fingerprint'] || req.headers['X-Device-Fingerprint']) as string | undefined;
+    const sessionToken = (req.headers['x-session-token'] || req.headers['X-Session-Token']) as string | undefined;
 
-    if (!deviceId) {
-      return res.status(400).json({ error: 'device_id_required', error_description: 'X-Device-ID header is required' });
+    if (!deviceId || !sessionToken) {
+      return res.status(400).json({ 
+        error: 'missing_device_credentials', 
+        error_description: 'X-Device-ID and X-Session-Token headers are required' 
+      });
     }
 
     const { pinCode } = req.body || {};
@@ -138,20 +141,7 @@ export async function loginPOS(req: Request, res: Response) {
     }
 
     try {
-      const { account, device } = await accountService.authenticatePOS(pinCode, deviceId);
-
-      // 可选：记录设备指纹变化（不阻止登录）
-      if (deviceFingerprint) {
-        audit('device_fingerprint_captured', {
-          deviceId,
-          fingerprint: deviceFingerprint,
-          accountId: account.id,
-        });
-      }
-
-      // 更新设备活跃时间
-      const { deviceService } = await import('../services/device.js');
-      await deviceService.updateLastActive(deviceId);
+      const { account, device } = await accountService.authenticatePOS(pinCode, deviceId, sessionToken);
 
       // 成功：记录 login attempt
       await prisma.loginAttempt.create({
@@ -162,7 +152,6 @@ export async function loginPOS(req: Request, res: Response) {
           organizationId: device.orgId,
           ipAddress: req.ip || 'unknown',
           userAgent: req.get('user-agent') || null,
-          deviceFingerprint: deviceFingerprint || null,
           success: true,
         },
       });
@@ -214,6 +203,9 @@ export async function loginPOS(req: Request, res: Response) {
         },
       });
 
+      if (e?.message === 'invalid_session') {
+        return res.status(403).json({ error: 'invalid_session', detail: 'Session token is invalid or expired. Please reactivate the device.' });
+      }
       if (e?.message === 'account_locked') {
         return res.status(401).json({ error: 'account_locked', detail: 'Account is temporarily locked' });
       }
@@ -253,15 +245,7 @@ export async function logout(req: Request, res: Response) {
       } catch (_e) {}
     }
 
-    // POS 登录：更新 device.lastActiveAt
-    if (isPOS && deviceId) {
-      try {
-        await prisma.device.update({
-          where: { id: deviceId },
-          data: { lastActiveAt: new Date() },
-        });
-      } catch (_e) {}
-    }
+    // POS 登录：不需要更新 lastActiveAt（已移至 DeviceSession）
 
     // 将 access_token 的 jti 加入 Redis 黑名单（如果 Redis 可用）
     if (jti && isRedisConnected()) {

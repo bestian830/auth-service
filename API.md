@@ -420,7 +420,10 @@ json
 
 **请求头:**
 
-`X-Device-ID: device-uuid  // 仅 POS 登录时需要`
+```
+X-Device-ID: device-uuid  // 仅 POS 登录时需要
+X-Session-Token: Kx7v...  // 仅 POS 登录时需要
+```
 
 此端点支持三种登录场景,通过请求体中的字段自动识别:
 
@@ -579,6 +582,7 @@ client_id=tymoe-web
 
 ```http
 X-Device-ID: device-uuid
+X-Session-Token: Kx7vZ9mW3Qp5RtY2jN8hU6fL1cV4bS0aO-iPqE3wXyD
 ```
 
 **请求体 (application/x-www-form-urlencoded):**
@@ -586,7 +590,27 @@ X-Device-ID: device-uuid
 `grant_type=password
 pin_code=1234`
 
-**识别方式:** 存在 pin_code 字段 + 请求头有 X-Device-ID
+**识别方式:** 存在 pin_code 字段 + 请求头有 X-Device-ID + X-Session-Token
+
+**处理逻辑:**
+
+1. 验证 `grant_type=password`
+2. 从请求头提取 `X-Device-ID` 和 `X-Session-Token`
+3. 如果缺少 X-Device-ID 或 X-Session-Token → 返回 400 "missing_device_credentials"
+4. 查询 Device:
+    - 验证 device 存在且 status = 'ACTIVE'
+    - 如果不存在或状态不对 → 返回 403 "device_not_authorized"
+5. 查询 DeviceSession:
+    - 计算 sessionToken 的 SHA-256 哈希值
+    - 查询 device_sessions 表验证 sessionTokenHash 匹配
+    - 如果不匹配或 session 不存在 → 返回 403 "invalid_session"
+6. 查询该设备所属组织的 Account (通过 pin_code):
+    - 使用 bcrypt 验证 pinCode
+    - 如果 PIN 错误 → 返回 401 "invalid_credentials"
+7. 验证组织 status = 'ACTIVE'
+8. 更新 DeviceSession.lastActiveAt = NOW()
+9. 记录到 login_attempts 和 audit_logs
+10. 生成 access_token (4.5小时有效，无 refresh_token)
 
 **生成的 access_token (JWT):**
 
@@ -1858,7 +1882,7 @@ json
 **请求头:**
 
 `X-Device-ID: device-uuid  // 必须
-X-Device-Fingerprint: {...}  // 可选,JSON字符串`
+X-Session-Token: Kx7vZ9mW3Qp5RtY2jN8hU6fL1cV4bS0aO-iPqE3wXyD  // 必须`
 
 **请求体:**
 
@@ -1869,21 +1893,28 @@ X-Device-Fingerprint: {...}  // 可选,JSON字符串`
 **字段说明:**
 
 - pinCode (必填, string): 4位数字 PIN 码
-- deviceId 从请求头自动获取,不在请求体中
+- deviceId 从请求头 X-Device-ID 获取
+- sessionToken 从请求头 X-Session-Token 获取
 
 **处理逻辑:**
 
-1. 从请求头获取 X-Device-ID, X-Device-Fingerprint(可选)
-2. 验证 pinCode 格式
-3. 查询 devices 表验证设备存在且 status = 'ACTIVE'
-4. 获取 device.orgId
-5. 在该组织下查询 pinCode 对应的账号
-6. 使用 bcrypt.compare() 验证 pinCode
-7. 验证组织的status
-8. 可选:如果提供设备指纹,记录/对比变化(不阻止登录)
-9. 更新 devices.lastActiveAt 和 accounts.lastLoginAt
-10. 记录到 login_attempts 和 audit_logs
-11. 返回账号、组织和设备信息
+1. 从请求头获取 X-Device-ID 和 X-Session-Token
+2. 如果缺少 X-Device-ID 或 X-Session-Token → 返回 400 "missing_device_credentials"
+3. 验证 pinCode 格式
+4. 查询 Device:
+    - 验证 device 存在且 status = 'ACTIVE'
+    - 如果不存在或状态不对 → 返回 403 "device_not_authorized"
+5. 查询 DeviceSession:
+    - 计算 sessionToken 的 SHA-256 哈希值
+    - 查询 device_sessions 表验证 sessionTokenHash 匹配
+    - 如果不匹配或 session 不存在 → 返回 403 "invalid_session"
+6. 获取 device.orgId
+7. 在该组织下查询 pinCode 对应的账号
+8. 使用 bcrypt.compare() 验证 pinCode
+9. 验证组织的status
+10. 更新 DeviceSession.lastActiveAt 和 accounts.lastLoginAt
+11. 记录到 login_attempts 和 audit_logs
+12. 返回账号、组织和设备信息
 
 **成功响应 (200):**
 
@@ -1914,8 +1945,10 @@ X-Device-Fingerprint: {...}  // 可选,JSON字符串`
 
 **错误响应:**
 
+- 400 missing_device_credentials: "Missing X-Device-ID or X-Session-Token header"
 - 401 invalid_credentials: "PIN code is incorrect"
 - 403 device_not_authorized: "This device is not authorized for your organization or is inactive"
+- 403 invalid_session: "Session token is invalid or expired. Please reactivate the device."
 - 404 device_not_found: "Device not found"
 
 ---
@@ -2653,7 +2686,7 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **请求头:**
 
-X-Device-Fingerprint: {...}  // 可选，设备指纹JSON`
+无需认证
 
 **请求体:**
 
@@ -2667,7 +2700,7 @@ X-Device-Fingerprint: {...}  // 可选，设备指纹JSON`
 - deviceId (必填, UUID): 设备ID
 - activationCode (必填, string): 9位激活码
 
-**注意:** 此接口不需要 Authorization，因为设备还未激活
+**注意:** 此接口不需要 Authorization，因为设备还未激活。激活接口支持幂等操作，可以使用相同的 deviceId + activationCode 重复激活。
 
 ---
 
@@ -2678,21 +2711,24 @@ X-Device-Fingerprint: {...}  // 可选，设备指纹JSON`
 
    `SELECT * FROM devices 
    WHERE id = deviceId 
-     AND activation_code = activationCode 
-     AND status = 'PENDING'`
+     AND activation_code = activationCode`
 
-1. 如果不存在 → 返回 404 "invalid_device_or_code"
-2. 如果 status != 'PENDING' → 返回 400 "device_already_activated"
-3. 查询组织，验证 org.status = 'ACTIVE'
-4. 激活设备:
+3. 如果不存在 → 返回 404 "invalid_device_or_code"
+4. 如果 activationCode 不匹配 → 返回 404 "invalid_device_or_code"
+5. 查询组织，验证 org.status = 'ACTIVE'
+6. 生成 sessionToken:
+    - 使用 crypto.randomBytes(32) 生成 256 位随机数
+    - 转为 base64url 格式 (43 字符)
+    - 计算 SHA-256 哈希值用于数据库存储
+7. 查询或创建 DeviceSession:
+    - 如果该 deviceId 已有 session → 覆盖旧 sessionTokenHash (幂等激活)
+    - 如果没有 session → 创建新 session
+8. 更新设备状态:
     - status = 'ACTIVE'
-    - deviceName = "收银台-001"
     - activatedAt = NOW()
-    - lastActiveAt = NOW()
-    - deviceFingerprint = 请求头的 deviceFingerprint（如果有）
     - updatedAt = NOW()
-5. 记录到 audit_logs
-6. 返回设备信息
+9. 记录到 audit_logs
+10. 返回设备信息和 sessionToken (明文，仅此一次)
 
 ---
 
@@ -2702,14 +2738,19 @@ X-Device-Fingerprint: {...}  // 可选，设备指纹JSON`
   "success": true,
   "message": "Device activated successfully",
   "data": {
-    "id": "device-uuid",
-    "orgId": "org-uuid",
-    "orgName": "市中心分店",
-    "deviceType": "POS",
-    "deviceName": "收银台-001",
-    "status": "ACTIVE",
-    "activatedAt": "2025-01-16T10:30:00.000Z"
-  }
+    "deviceId": "device-uuid",
+    "sessionToken": "Kx7vZ9mW3Qp5RtY2jN8hU6fL1cV4bS0aO-iPqE3wXyD",
+    "device": {
+      "id": "device-uuid",
+      "orgId": "org-uuid",
+      "orgName": "市中心分店",
+      "deviceType": "POS",
+      "deviceName": "收银台-001",
+      "status": "ACTIVE",
+      "activatedAt": "2025-01-16T10:30:00.000Z"
+    }
+  },
+  "warning": "Please save deviceId and sessionToken to localStorage and IndexedDB. The sessionToken will not be shown again."
 }`
 
 ---
@@ -3084,6 +3125,93 @@ X-Device-Fingerprint: {...}  // 可选，设备指纹JSON`
 `{
   "error": "only_user_can_delete_device",
   "detail": "Only User (owner) can delete devices"
+}`
+
+**404 - 设备不存在**
+
+`{
+  "error": "device_not_found",
+  "detail": "Device not found"
+}`
+
+---
+
+## 🔍 4.8 查询设备会话状态
+
+**端点:** `GET /api/auth-service/v1/devices/:deviceId/session`
+
+**请求头:**
+
+`Authorization: Bearer <access_token>`
+
+**用途:**
+
+- User/Manager/Owner 查询设备是否有活跃会话
+- 检查设备激活状态
+- 查看会话最后活跃时间
+
+---
+
+### 处理逻辑
+
+1. 从 access_token 中提取 userType, userId 或 accountId
+2. 查询设备 (by id = deviceId)
+3. 如果不存在 → 返回 404 "device_not_found"
+4. 查询关联的组织
+5. 权限校验:
+    - 如果 userType = 'USER':
+        - 验证 org.userId = 当前 User ID
+    - 如果 userType = 'ACCOUNT':
+        - 查询当前 Account，验证 account.orgId = device.orgId
+        - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
+6. 查询 DeviceSession (by deviceId)
+7. 返回会话状态信息（不返回 sessionToken）
+
+---
+
+### 成功响应 (200)
+
+**有活跃会话:**
+
+`{
+  "success": true,
+  "data": {
+    "deviceId": "device-uuid",
+    "sessionStatus": "ACTIVE",
+    "activatedAt": "2025-01-15T10:00:00.000Z",
+    "lastActiveAt": "2025-01-16T09:30:00.000Z",
+    "sessionExists": true
+  }
+}`
+
+**无会话（未激活）:**
+
+`{
+  "success": true,
+  "data": {
+    "deviceId": "device-uuid",
+    "sessionStatus": null,
+    "sessionExists": false,
+    "message": "Device has not been activated yet"
+  }
+}`
+
+---
+
+### 错误响应
+
+**403 - 权限不足**
+
+`{
+  "error": "access_denied",
+  "detail": "You don't have permission to view this device's session"
+}`
+
+**403 - STAFF 无后台权限**
+
+`{
+  "error": "staff_no_backend_access",
+  "detail": "Staff accounts cannot access the backend system"
 }`
 
 **404 - 设备不存在**

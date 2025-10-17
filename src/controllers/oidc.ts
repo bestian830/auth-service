@@ -179,10 +179,11 @@ export async function token(req: Request, res: Response){
     if (grant_type === 'password') {
       const { email, username, pin_code, password } = req.body || {};
       const deviceId = (req.headers['x-device-id'] || req.headers['X-Device-ID']) as string | undefined;
+      const sessionToken = (req.headers['x-session-token'] || req.headers['X-Session-Token']) as string | undefined;
 
-      // Account POS 登录：pin_code + X-Device-ID（最优先判断，因为有明确的 pin_code 字段）
-      if (pin_code && deviceId && !email && !username && !password) {
-        const { account: acc, device } = await accountService.authenticatePOS(pin_code, deviceId);
+      // Account POS 登录：pin_code + X-Device-ID + X-Session-Token（最优先判断，因为有明确的 pin_code 字段）
+      if (pin_code && deviceId && sessionToken && !email && !username && !password) {
+        const { account: acc, device } = await accountService.authenticatePOS(pin_code, deviceId, sessionToken);
 
         // 构建完整的 organization 对象
         const organization = {
