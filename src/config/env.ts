@@ -83,6 +83,9 @@ export const env = {
   introspectClientId: process.env.INTROSPECT_CLIENT_ID ?? 'gateway',
   introspectClientSecret: process.env.INTROSPECT_CLIENT_SECRET ?? 'gateway-secret',
   internalServiceKey: process.env.INTERNAL_SERVICE_KEY ?? 'dev-internal-service-key',
+  
+  // Subscription Service 配置
+  subscriptionServiceUrl: process.env.SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:8088/api/subscription-service/v1',
 
   // Admin API Keys 配置
   adminApiKeys: process.env.ADMIN_API_KEYS ?? '',

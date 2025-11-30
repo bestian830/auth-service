@@ -59,6 +59,30 @@ export async function loginBackend(req: Request, res: Response) {
         });
       }
 
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      // ⭐ 新增：检查订阅状态（宽松策略）
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      try {
+        const { getModuleQuotas } = await import('../services/subscriptionService.js');
+        const quotaData = await getModuleQuotas(account.orgId);
+        
+        if (quotaData) {
+          // subscription-service 可用，检查订阅状态
+          if (quotaData.subscriptionStatus !== 'active' && quotaData.subscriptionStatus !== 'trialing') {
+            console.log(`[Login] 订阅状态异常: ${account.orgId}, status: ${quotaData.subscriptionStatus}`);
+            return res.status(403).json({
+              error: 'subscription_required',
+              detail: `Subscription is ${quotaData.subscriptionStatus}. Please renew your subscription.`,
+              subscriptionStatus: quotaData.subscriptionStatus
+            });
+          }
+        }
+        // subscription-service 不可用时，允许登录（宽松策略）
+      } catch (err) {
+        // 订阅检查失败，允许登录（宽松策略）
+        console.warn(`[Login] 订阅检查失败，允许登录: ${account.orgId}`, err);
+      }
+
       // 成功：记录 login attempt
       await prisma.loginAttempt.create({
         data: {
@@ -142,6 +166,30 @@ export async function loginPOS(req: Request, res: Response) {
 
     try {
       const { account, device } = await accountService.authenticatePOS(pinCode, deviceId, sessionToken);
+
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      // ⭐ 新增：检查订阅状态（宽松策略）
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      try {
+        const { getModuleQuotas } = await import('../services/subscriptionService.js');
+        const quotaData = await getModuleQuotas(device.orgId);
+        
+        if (quotaData) {
+          // subscription-service 可用，检查订阅状态
+          if (quotaData.subscriptionStatus !== 'active' && quotaData.subscriptionStatus !== 'trialing') {
+            console.log(`[POS Login] 订阅状态异常: ${device.orgId}, status: ${quotaData.subscriptionStatus}`);
+            return res.status(403).json({
+              error: 'subscription_required',
+              detail: `Subscription is ${quotaData.subscriptionStatus}. Please renew your subscription.`,
+              subscriptionStatus: quotaData.subscriptionStatus
+            });
+          }
+        }
+        // subscription-service 不可用时，允许登录（宽松策略）
+      } catch (err) {
+        // 订阅检查失败，允许登录（宽松策略）
+        console.warn(`[POS Login] 订阅检查失败，允许登录: ${device.orgId}`, err);
+      }
 
       // 成功：记录 login attempt
       await prisma.loginAttempt.create({
@@ -377,6 +425,80 @@ export async function createAccount(req: Request, res: Response) {
       return forbid(res);
     }
 
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ⭐ 新增：创建前检查配额
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    const { accountNeedsQuotaCheck, getAccountModuleKey } = await import('../config/moduleMapping.js');
+    const { checkModuleQuota } = await import('../services/subscriptionService.js');
+
+    // 检查该账号类型是否需要配额验证
+    if (accountNeedsQuotaCheck(accountType)) {
+      const moduleKey = getAccountModuleKey(accountType);
+      
+      if (!moduleKey) {
+        // 理论上不会到这里，因为 needsQuotaCheck 已经检查过了
+        return res.status(500).json({
+          error: 'server_error',
+          detail: 'Failed to determine module key for account type'
+        });
+      }
+
+      // 调用 subscription-service 检查配额
+      const quotaCheck = await checkModuleQuota(orgId, moduleKey);
+
+      if (!quotaCheck.hasQuota || quotaCheck.subscriptionStatus === 'unknown') {
+        // subscription-service 不可用或无订阅 - 严格策略：拒绝创建
+        return res.status(503).json({
+          error: 'subscription_service_unavailable',
+          detail: 'Unable to verify subscription status. Please try again later.',
+          subscriptionStatus: quotaCheck.subscriptionStatus
+        });
+      }
+
+      if (quotaCheck.subscriptionStatus !== 'active' && quotaCheck.subscriptionStatus !== 'trialing') {
+        return res.status(403).json({
+          error: 'no_active_subscription',
+          detail: `Subscription is ${quotaCheck.subscriptionStatus}. Please renew or upgrade your subscription.`,
+          subscriptionStatus: quotaCheck.subscriptionStatus
+        });
+      }
+
+      if (quotaCheck.purchasedCount === 0) {
+        return res.status(403).json({
+          error: 'module_not_subscribed',
+          detail: `${accountType} seats are not included in your current subscription. Please upgrade your plan.`,
+          module: moduleKey
+        });
+      }
+
+      // 查询本地已使用数量（排除软删除的账号）
+      const usedCount = await prisma.account.count({
+        where: {
+          orgId,
+          accountType,
+          status: { not: 'DELETED' }
+        }
+      });
+
+      // 检查是否超额
+      if (usedCount >= quotaCheck.purchasedCount) {
+        return res.status(403).json({
+          error: 'quota_exceeded',
+          detail: `${accountType} seat limit reached (${usedCount}/${quotaCheck.purchasedCount}). Please upgrade your subscription to add more seats.`,
+          quota: {
+            module: moduleKey,
+            used: usedCount,
+            limit: quotaCheck.purchasedCount,
+            remaining: 0
+          }
+        });
+      }
+
+      // 配额检查通过
+      console.log(`[Quota Check] ${accountType} 账号配额检查通过: ${usedCount + 1}/${quotaCheck.purchasedCount}`);
+    }
+
+    // 权限和配额检查通过，继续创建账号
     const request = {
       orgId,
       accountType,

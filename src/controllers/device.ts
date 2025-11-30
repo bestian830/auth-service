@@ -72,7 +72,79 @@ export async function createDevice(req: Request, res: Response) {
       });
     }
 
-    // 创建设备
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ⭐ 新增：创建前检查设备配额
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    const { deviceNeedsQuotaCheck, getDeviceModuleKey } = await import('../config/moduleMapping.js');
+    const { checkModuleQuota } = await import('../services/subscriptionService.js');
+
+    // 检查该设备类型是否需要配额验证
+    if (deviceNeedsQuotaCheck(deviceType)) {
+      const moduleKey = getDeviceModuleKey(deviceType);
+      
+      if (!moduleKey) {
+        return res.status(500).json({
+          error: 'server_error',
+          detail: 'Failed to determine module key for device type'
+        });
+      }
+
+      // 调用 subscription-service 检查配额
+      const quotaCheck = await checkModuleQuota(orgId, moduleKey);
+
+      if (!quotaCheck.hasQuota || quotaCheck.subscriptionStatus === 'unknown') {
+        // subscription-service 不可用或无订阅 - 严格策略：拒绝创建
+        return res.status(503).json({
+          error: 'subscription_service_unavailable',
+          detail: 'Unable to verify subscription status. Please try again later.',
+          subscriptionStatus: quotaCheck.subscriptionStatus
+        });
+      }
+
+      if (quotaCheck.subscriptionStatus !== 'active' && quotaCheck.subscriptionStatus !== 'trialing') {
+        return res.status(403).json({
+          error: 'no_active_subscription',
+          detail: `Subscription is ${quotaCheck.subscriptionStatus}. Please renew or upgrade your subscription.`,
+          subscriptionStatus: quotaCheck.subscriptionStatus
+        });
+      }
+
+      if (quotaCheck.purchasedCount === 0) {
+        return res.status(403).json({
+          error: 'module_not_subscribed',
+          detail: `${deviceType} devices are not included in your current subscription. Please upgrade your plan.`,
+          module: moduleKey
+        });
+      }
+
+      // 查询本地已使用数量（统计 PENDING + ACTIVE，排除 DELETED）
+      const usedCount = await prisma.device.count({
+        where: {
+          orgId,
+          deviceType,
+          status: { in: ['PENDING', 'ACTIVE'] }
+        }
+      });
+
+      // 检查是否超额
+      if (usedCount >= quotaCheck.purchasedCount) {
+        return res.status(403).json({
+          error: 'quota_exceeded',
+          detail: `${deviceType} device limit reached (${usedCount}/${quotaCheck.purchasedCount}). Please upgrade your subscription to add more devices.`,
+          quota: {
+            module: moduleKey,
+            used: usedCount,
+            limit: quotaCheck.purchasedCount,
+            remaining: 0
+          }
+        });
+      }
+
+      // 配额检查通过
+      console.log(`[Quota Check] ${deviceType} 设备配额检查通过: ${usedCount + 1}/${quotaCheck.purchasedCount}`);
+    }
+
+    // 权限和配额检查通过，继续创建设备
     const device = await deviceService.createDevice(orgId, deviceType, deviceName, claims.sub as string);
 
     return res.status(201).json({
