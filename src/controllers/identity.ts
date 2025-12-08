@@ -398,7 +398,11 @@ export async function login(req: Request, res: Response) {
         orgType: true,
         productType: true,
         status: true,
-        parentOrgId: true
+        parentOrgId: true,
+        description: true,
+        location: true,
+        phone: true,
+        email: true
       },
       orderBy: { createdAt: 'asc' }
     });
@@ -426,7 +430,11 @@ export async function login(req: Request, res: Response) {
         orgType: org.orgType,
         productType: org.productType,
         status: org.status,
-        ...(org.parentOrgId && { parentOrgId: org.parentOrgId })
+        ...(org.parentOrgId && { parentOrgId: org.parentOrgId }),
+        ...(org.description && { description: org.description }),
+        ...(org.location && { location: org.location }),
+        ...(org.phone && { phone: org.phone }),
+        ...(org.email && { email: org.email })
       }))
     });
   } catch (error: unknown) {
