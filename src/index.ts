@@ -91,7 +91,14 @@ app.use(cors(corsOptions));
 app.use(sessionMiddleware);
 
 // Health check endpoint (不需要API前缀，用于负载均衡器)
-app.get('/healthz', (_req, res) => res.json({ ok: true }));
+app.get('/healthz', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true });
+  } catch {
+    res.status(503).json({ ok: false });
+  }
+});
 
 // Prometheus metrics端点 (不需要API前缀，用于监控系统)
 app.get('/metrics', metricsAuth, async (_req, res) => {
